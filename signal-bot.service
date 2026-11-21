@@ -1,0 +1,14 @@
+# VPS (Ubuntu) without Docker: sudo cp signal-bot.service /etc/systemd/system/
+[Unit]
+Description=Telegram Signal Bot
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/signal_bot
+EnvironmentFile=/opt/signal_bot/.env
+ExecStart=/usr/bin/python3 /opt/signal_bot/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

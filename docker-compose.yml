@@ -1,0 +1,7 @@
+services:
+  signal-bot:
+    build: .
+    restart: always          # restarts automatically after a crash or server reboot
+    env_file: .env
+    volumes:
+      - ./data:/data         # stats survive restarts
