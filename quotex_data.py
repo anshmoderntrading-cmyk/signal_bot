@@ -10,6 +10,18 @@ import time
 
 import pandas as pd
 
+def _patch_curl_cffi():
+    """pyquotex calls response.reason_phrase (httpx name); curl_cffi only has .reason -> crash
+    that hides the real error. Add the missing attribute so the real HTTP status is shown."""
+    try:
+        from curl_cffi.requests import Response
+        if not hasattr(Response, "reason_phrase"):
+            Response.reason_phrase = property(
+                lambda r: f"HTTP {r.status_code} {getattr(r, 'reason', '')}".strip())
+    except Exception:
+        pass
+
+
 COLS = ["open_time", "open", "high", "low", "close", "volume", "close_time"]
 
 
@@ -46,6 +58,7 @@ class QuotexFeed:
         if self.lock is None:
             self.lock = asyncio.Lock()
         if self.client is None:
+            _patch_curl_cffi()
             from pyquotex.stable_api import Quotex
             self.client = Quotex(email=self.email, password=self.password, lang="en",
                                  on_otp_callback=self.otp_callback)
