@@ -56,7 +56,9 @@ elif config.DATA_SOURCE == "quotex":
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 IST = timezone(timedelta(hours=5, minutes=30))
 BTN_ON, BTN_STOP = "🟢 Signal ON", "🔴 Signal STOP"
-KEYBOARD = {"keyboard": [[{"text": BTN_ON}, {"text": BTN_STOP}]], "resize_keyboard": True}
+BTN_LIVE, BTN_OTC = "📈 LIVE Market", "🌙 OTC Market"
+KEYBOARD = {"keyboard": [[{"text": BTN_ON}, {"text": BTN_STOP}],
+                         [{"text": BTN_LIVE}, {"text": BTN_OTC}]], "resize_keyboard": True}
 lock = threading.Lock()
 
 
@@ -78,6 +80,7 @@ def save():
 
 state = load()
 state.setdefault("stickers", {"win": [], "loss": []})
+state.setdefault("mode", "otc")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []  # last few signalled pairs, so every signal comes from a different market
 
@@ -148,8 +151,17 @@ def handle(msg):
         if txt == BTN_ON or txt.lower().startswith(("/start", "/on")):
             if cid not in state["subscribers"]:
                 state["subscribers"].append(cid); save()
-            note = "" if market_open() else "\n⚠️ The forex market is closed right now (weekend). Signals will start when it opens."
+            mode = ("🌙 OTC" if state.get("mode") != "live" else "📈 LIVE") if QX is not None else "📈 LIVE"
+            note = "" if market_open() else "\n⚠️ The live market is closed right now (weekend). Press 🌙 OTC Market, or wait for Monday."
+            note = f"\nMode: {mode}" + note
             send(cid, f"✅ Signal ON\nOne trade at a time: result + chart, then the next signal after {config.GAP_MINUTES} min.{note}", keyboard=True)
+        elif txt == BTN_LIVE or low.startswith("/live"):
+            state["mode"] = "live"; save()
+            note = "" if forex_week_open() else "\n⚠️ The live market is closed now (weekend). Signals start Monday ~3:30 AM IST, or press 🌙 OTC Market."
+            send(cid, f"📈 LIVE Market selected\nReal market pairs (Mon-Fri).{note}", keyboard=True)
+        elif txt == BTN_OTC or low.startswith("/otc"):
+            state["mode"] = "otc"; save()
+            send(cid, "🌙 OTC Market selected\nOTC pairs (every day, 24/7).", keyboard=True)
         elif txt == BTN_STOP or txt.lower().startswith(("/stop", "/off")):
             if cid in state["subscribers"]:
                 state["subscribers"].remove(cid); save()
@@ -172,10 +184,22 @@ def poll_updates():
 
 
 # ---------------- signals ----------------
+def current_symbols():
+    """Pairs to scan: Quotex OTC (EURUSD_otc) or Quotex live (EURUSD); real forex feed otherwise."""
+    if QX is None:
+        return config.SYMBOLS
+    base = [s.replace("_otc", "") for s in config.SYMBOLS]
+    return base if state.get("mode") == "live" else [s + "_otc" for s in base]
+
+
 def market_open(now=None):
-    """Forex: open Sun 22:00 UTC – Fri 22:00 UTC. Quotex OTC: always open."""
-    if QX is not None:
+    """OTC: always open. Live / real forex: Sun 22:00 UTC – Fri 22:00 UTC."""
+    if QX is not None and state.get("mode") != "live":
         return True
+    return forex_week_open(now)
+
+
+def forex_week_open(now=None):
     now = now or datetime.now(timezone.utc)
     wd, h = now.weekday(), now.hour
     if wd == 5:
@@ -205,7 +229,7 @@ def best_signal(now_ms):
     """Scan all pairs and pick the strongest setup."""
     best = None
     stats = {"ok": 0, "stale": 0, "closed": 0, "no_setup": 0, "error": 0, "few_candles": 0}
-    for sym in config.SYMBOLS:
+    for sym in current_symbols():
         try:
             df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
             if len(df) < 60:
