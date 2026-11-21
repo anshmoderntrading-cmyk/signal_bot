@@ -1,8 +1,12 @@
 services:
-  - type: worker              # background worker = runs 24/7 (paid Starter plan)
+  # FREE plan: a web service + a small health endpoint.
+  # A free service sleeps after 15 min without traffic, so ping its URL
+  # every 5-10 minutes from cron-job.org / UptimeRobot (see README).
+  - type: web
     name: telegram-signal-bot
     runtime: docker
-    plan: starter
+    plan: free
+    healthCheckPath: /
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false            # enter it in the Render dashboard

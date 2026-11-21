@@ -9,6 +9,8 @@ import threading
 import time
 from datetime import datetime, timezone, timedelta
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import requests
 
 import config
@@ -200,9 +202,34 @@ def scanner_loop():
                 print("scan error", s, e)
 
 
+# ---------------- keep-alive web server (Render free web service) ----------------
+class Health(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = f"OK - bot running | subscribers: {len(state['subscribers'])}".encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def start_web():
+    port = int(os.getenv("PORT", "0"))
+    if port:
+        threading.Thread(target=HTTPServer(("0.0.0.0", port), Health).serve_forever, daemon=True).start()
+        print(f"Health server on port {port}")
+
+
 if __name__ == "__main__":
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN first (token from @BotFather).")
     print("Bot running... send /start to your bot on Telegram")
+    start_web()
     threading.Thread(target=scanner_loop, daemon=True).start()
     poll_updates()

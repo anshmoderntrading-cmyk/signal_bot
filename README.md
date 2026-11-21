@@ -40,5 +40,8 @@ This shows the real accuracy on past data. Only trust the strategy if it holds u
     pip install -r requirements.txt && cp .env.example .env   # add your token
     sudo cp signal-bot.service /etc/systemd/system/
     sudo systemctl enable --now signal-bot
-### Option C: Render.com
+### Option C: Render.com (FREE plan)
 Push the code to GitHub → Render → New Blueprint → select the repo (render.yaml is included) → put TELEGRAM_BOT_TOKEN in the dashboard.
+A free web service sleeps after 15 minutes without traffic. To stop that, go to cron-job.org or uptimerobot.com
+and set up a monitor that pings your Render URL (https://<name>.onrender.com) every 5 minutes.
+Limits of the free plan: a restart/redeploy resets stats.json (Live Stats); the 750 free hours/month are enough for 1 service.
