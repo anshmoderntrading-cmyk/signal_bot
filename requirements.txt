@@ -2,3 +2,4 @@ requests>=2.31
 pandas>=2.0
 # Quotex OTC (unofficial). Installed from a GitHub zip, so git isn't needed.
 pyquotex @ https://github.com/cleitonleonel/pyquotex/archive/refs/heads/master.zip
+pillow>=10

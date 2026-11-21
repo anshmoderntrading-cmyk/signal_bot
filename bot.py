@@ -1,6 +1,6 @@
 """
 Forex Signal Bot: only 2 buttons (Signal ON / Signal STOP).
-While ON, a signal arrives automatically every SIGNAL_EVERY_MINUTES minutes:
+While ON: one trade at a time -> signal, 1-min trade, result + chart, GAP_MINUTES pause, next signal:
 
   AUD/JPY LIVE 🟢 BUY
   ⏱️ 1 Min
@@ -18,6 +18,7 @@ import requests
 import config
 from data import get_klines, closed_candles, is_fresh
 from strategy import analyze
+from chart import trade_chart
 
 QX = None
 OTP = {"waiting": False, "code": None}
@@ -93,6 +94,19 @@ def send(chat_id, text, reply_to=None, keyboard=False):
         print("send error:", e)
 
 
+def send_photo(chat_id, png, caption="", reply_to=None):
+    data = {"chat_id": chat_id, "caption": caption}
+    if reply_to:
+        data["reply_to_message_id"] = reply_to
+    try:
+        r = requests.post(f"{API}/sendPhoto", data=data,
+                          files={"photo": ("trade.png", png, "image/png")}, timeout=30).json()
+        return r.get("ok", False)
+    except Exception as e:
+        print("photo error:", e)
+        return False
+
+
 def handle(msg):
     cid = msg["chat"]["id"]
     txt = (msg.get("text") or "").strip()
@@ -106,7 +120,7 @@ def handle(msg):
             if cid not in state["subscribers"]:
                 state["subscribers"].append(cid); save()
             note = "" if market_open() else "\n⚠️ The forex market is closed right now (weekend). Signals will start when it opens."
-            send(cid, f"✅ Signal ON\nA signal every {config.SIGNAL_EVERY_MINUTES} min.{note}", keyboard=True)
+            send(cid, f"✅ Signal ON\nOne trade at a time: result + chart, then the next signal after {config.GAP_MINUTES} min.{note}", keyboard=True)
         elif txt == BTN_STOP or txt.lower().startswith(("/stop", "/off")):
             if cid in state["subscribers"]:
                 state["subscribers"].remove(cid); save()
@@ -197,9 +211,10 @@ def check_result(sym, sig, start_ms, msg_ids):
     exit_close = entry_close + config.EXPIRY_MINUTES * 60_000
     time.sleep(max(0, (exit_close - time.time() * 1000) / 1000) + 3)
     entry = exit_price = None
+    df = None
     for _ in range(12):
         try:
-            df = get_klines(sym, config.INTERVAL, 10)
+            df = get_klines(sym, config.INTERVAL, 40)
             e = df[df["close_time"] == entry_close]
             x = df[df["close_time"] == exit_close]
             if len(e) and len(x):
@@ -221,30 +236,42 @@ def check_result(sym, sig, start_ms, msg_ids):
         state[res] += 1; save()
     if config.SEND_RESULTS:
         text = {"win": "✅ WIN", "loss": "❌ LOSS", "draw": "➖ DRAW"}[res]
+        png = None
+        try:
+            png = trade_chart(pair_name(sym), sig["direction"], df, start_ms, entry, exit_price, res,
+                              config.EXPIRY_MINUTES)
+        except Exception as e:
+            print("chart error:", e)
         for cid, mid in msg_ids.items():
-            send(cid, text, reply_to=mid)
+            if not (png and send_photo(cid, png, text, reply_to=mid)):
+                send(cid, text, reply_to=mid)
+
+
+def wait_next_minute():
+    time.sleep(60 - (time.time() % 60) + 1)   # 1 second after a candle closes
 
 
 def scanner_loop():
+    """One trade at a time: signal -> trade window -> result (+ chart) -> gap -> next signal."""
+    next_start_min = 0  # earliest allowed start (epoch seconds) for the next trade
     while True:
-        time.sleep(60 - (time.time() % 60) + 1)   # 1 second after each candle closes
-        minute = int(time.time() // 60)
-        if minute % config.SIGNAL_EVERY_MINUTES:
-            continue
         if not state["subscribers"] or not market_open():
+            wait_next_minute()
             continue
         now_ms = int(time.time() * 1000)
         best = best_signal(now_ms)
         if not best:
+            wait_next_minute()
             continue
         _, sym, sig, _ = best
         recent_pairs.append(sym)
-        del recent_pairs[:-config.NO_REPEAT_LAST]
-        # the trade starts at the NEXT full minute (at least 10 s after the signal is sent)
+        del recent_pairs[:-config.NO_REPEAT_LAST or None]
+        # trade starts at the next full minute (>=10 s lead) and not before the gap is over
         now = time.time()
         start_s = (int(now) // 60 + 1) * 60
         if start_s - now < 10:
             start_s += 60
+        start_s = max(start_s, next_start_min)
         start = datetime.fromtimestamp(start_s, timezone.utc)
         end = start + timedelta(minutes=config.EXPIRY_MINUTES)
         text = fmt_signal(sym, sig["direction"], start, end)
@@ -253,7 +280,10 @@ def scanner_loop():
             mid = send(cid, text)
             if mid:
                 msg_ids[cid] = mid
-        threading.Thread(target=check_result, args=(sym, sig, start_s * 1000, msg_ids), daemon=True).start()
+        check_result(sym, sig, start_s * 1000, msg_ids)  # waits until the trade is finished
+        end_s = start_s + config.EXPIRY_MINUTES * 60
+        next_start_min = end_s + config.GAP_MINUTES * 60
+        # next signal is sent right away; its trade starts after the gap
 
 
 # ---------------- keep-alive web server (Render free) ----------------

@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 if [ ! -f .setup_done ]; then
   pkg update -y && pkg upgrade -y
   pkg install -y python git build-essential cmake ninja openssl libopenblas \
-                 libandroid-execinfo patchelf llvm lld binutils python-numpy
+                 libandroid-execinfo patchelf llvm lld binutils python-numpy python-pillow
   # pandas: prefer the ready-made Termux package (fast); otherwise pip (slow compile)
   (pkg install -y tur-repo && pkg install -y python-pandas) || pip install pandas || { echo "pandas install failed - send a screenshot"; exit 1; }
   pip install requests || { echo "requests install failed"; exit 1; }

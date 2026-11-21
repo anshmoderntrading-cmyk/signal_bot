@@ -1,3 +1,4 @@
 requests>=2.31
 pandas>=2.0
 pyquotex @ https://github.com/cleitonleonel/pyquotex/archive/refs/heads/master.zip
+pillow>=10
