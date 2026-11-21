@@ -17,7 +17,7 @@ import requests
 
 import config
 from data import get_klines, closed_candles, is_fresh
-from strategy import analyze
+from strategy import analyze, analyze_v2
 from chart import trade_chart
 
 QX = None
@@ -80,7 +80,8 @@ def save():
 
 state = load()
 state.setdefault("stickers", {"win": [], "loss": []})
-state.setdefault("mode", "otc")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
+state.setdefault("mode", "otc")
+state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []  # last few signalled pairs, so every signal comes from a different market
 
@@ -225,10 +226,17 @@ def fmt_signal(sym, direction, start, end):
             f"🕒 {t(start)} – {t(end)}")
 
 
+def pair_is_weak(sym):
+    r = state.get("pair_results", {}).get(sym, [])
+    if len(r) < config.PAIR_MIN_TRADES:
+        return False
+    return 100 * r.count("win") / len(r) < config.PAIR_MIN_WINRATE
+
+
 def best_signal(now_ms):
     """Scan all pairs and pick the strongest setup."""
     best = None
-    stats = {"ok": 0, "stale": 0, "closed": 0, "no_setup": 0, "error": 0, "few_candles": 0}
+    stats = {"ok": 0, "stale": 0, "closed": 0, "no_setup": 0, "error": 0, "few_candles": 0, "weak_pair": 0}
     for sym in current_symbols():
         try:
             df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
@@ -241,7 +249,14 @@ def best_signal(now_ms):
             if QX is not None and not QX.is_open(sym):
                 stats["closed"] += 1
                 continue
-            sig = analyze(df, config.MIN_SCORE, force=True)
+            if pair_is_weak(sym):
+                stats["weak_pair"] += 1
+                continue
+            force = not config.QUALITY_ONLY
+            if config.STRATEGY == "v2":
+                sig = analyze_v2(df, config.MIN_SCORE_V2, force=force)
+            else:
+                sig = analyze(df, config.MIN_SCORE, force=force)
             if not sig:
                 stats["no_setup"] += 1
                 continue
@@ -286,7 +301,12 @@ def check_result(sym, sig, start_ms, msg_ids):
         res = "loss"
     print(time.strftime("%H:%M"), "result", sym, sig["direction"], entry, "->", exit_price, res.upper())
     with lock:
-        state[res] += 1; save()
+        state[res] += 1
+        if res != "draw":
+            pr = state.setdefault("pair_results", {}).setdefault(sym, [])
+            pr.append(res)
+            del pr[:-20]
+        save()
     if config.SEND_RESULTS:
         text = {"win": "✅ WIN", "loss": "❌ LOSS", "draw": "➖ DRAW"}[res]
         png = None

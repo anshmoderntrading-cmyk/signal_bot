@@ -50,7 +50,15 @@ EXPIRY_MINUTES = _int_env("EXPIRY_MINUTES", 1)       # trade expiry
 SIGNAL_EVERY_MINUTES = max(1, _int_env("SIGNAL_EVERY_MINUTES", 1))  # an automatic signal every N minutes
 GAP_MINUTES = max(0, _int_env("GAP_MINUTES", 1))  # wait this long after a trade ends before the next trade
 NO_REPEAT_LAST = max(0, _int_env("NO_REPEAT_LAST", 3))  # don't repeat a pair used in the last N signals
-MIN_SCORE = _int_env("MIN_SCORE", 4)
+MIN_SCORE = _int_env("MIN_SCORE", 4)          # strategy v1 threshold (0-8)
+STRATEGY = os.getenv("STRATEGY", "v2").strip().lower()   # v2 = trend/level strategy with filters
+MIN_SCORE_V2 = _int_env("MIN_SCORE_V2", 5)    # strategy v2 threshold (0-7); higher = fewer, stronger signals
+# QUALITY_ONLY=1: send a signal only when a setup is strong enough (fewer signals, fewer losses)
+# QUALITY_ONLY=0: always send the best available setup every cycle (more signals, more losses)
+QUALITY_ONLY = os.getenv("QUALITY_ONLY", "1") != "0"
+# skip a pair when its recent live record is bad (after PAIR_MIN_TRADES trades, win% below PAIR_MIN_WINRATE)
+PAIR_MIN_TRADES = _int_env("PAIR_MIN_TRADES", 8)
+PAIR_MIN_WINRATE = _int_env("PAIR_MIN_WINRATE", 45)
 SEND_RESULTS = os.getenv("SEND_RESULTS", "1") != "0"  # short WIN/LOSS reply after expiry (0 = off)
 
 STATS_FILE = os.getenv("STATS_FILE", os.path.join(os.path.dirname(__file__), "stats.json"))

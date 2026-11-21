@@ -152,3 +152,111 @@ def analyze(df: pd.DataFrame, min_score: int = 4, force: bool = False):
         return {"direction": d, "score": sc, "max": max_score, "reasons": why,
                 "price": price, "rsi": c["rsi"], "edge": abs(call - put)}
     return None
+
+
+# =====================================================================
+# Strategy v2: trend-pullback + strong-level reversal, with chop/spike filters.
+# Fewer but higher-quality signals. Score 0..7, signal only if score >= min_score.
+# =====================================================================
+def adx(df, n=14):
+    up = df["high"].diff()
+    dn = -df["low"].diff()
+    plus_dm = up.where((up > dn) & (up > 0), 0.0)
+    minus_dm = dn.where((dn > up) & (dn > 0), 0.0)
+    tr = atr(df, 1)  # true range (EMA with alpha=1 == raw TR)
+    atr_n = tr.ewm(alpha=1 / n, adjust=False).mean()
+    pdi = 100 * plus_dm.ewm(alpha=1 / n, adjust=False).mean() / atr_n.replace(0, np.nan)
+    mdi = 100 * minus_dm.ewm(alpha=1 / n, adjust=False).mean() / atr_n.replace(0, np.nan)
+    dx = 100 * (pdi - mdi).abs() / (pdi + mdi).replace(0, np.nan)
+    return dx.ewm(alpha=1 / n, adjust=False).mean().fillna(0)
+
+
+def analyze_v2(df: pd.DataFrame, min_score: int = 5, force: bool = False):
+    """df = CLOSED candles only. Returns signal dict or None."""
+    if len(df) < 80:
+        return None
+    df = add_indicators(df)
+    df["ema50"] = ema(df["close"], 50)
+    df["adx"] = adx(df)
+    c, p = df.iloc[-1], df.iloc[-2]
+    a = c["atr"]
+    if not a or np.isnan(a):
+        return None
+    rng = c["high"] - c["low"]
+    # --- no-trade filters ---
+    if rng < 0.25 * a:          # dead market / doji, no information
+        return None
+    if rng > 2.8 * a:           # spike: too risky for 1-minute expiry
+        return None
+
+    body = abs(c["close"] - c["open"]) or 1e-12
+    lw = min(c["open"], c["close"]) - c["low"]
+    uw = c["high"] - max(c["open"], c["close"])
+    slope = df["ema50"].iloc[-1] - df["ema50"].iloc[-6]
+    up_trend = c["ema21"] > c["ema50"] and c["close"] > c["ema50"] and slope > 0
+    dn_trend = c["ema21"] < c["ema50"] and c["close"] < c["ema50"] and slope < 0
+    trending = c["adx"] >= 20
+    supports, resistances = support_resistance(df)
+    price = c["close"]
+
+    cands = []
+    # A) trend pullback continuation
+    if up_trend:
+        s, why = 2, ["Uptrend (EMA21>EMA50, rising)"]
+        if c["low"] <= c["ema21"] + 0.2 * a and c["close"] > c["ema21"]:
+            s += 1; why.append("Pullback to EMA21 held")
+        if c["close"] > c["open"] and lw > 0.5 * body:
+            s += 1; why.append("Bullish rejection candle")
+        if 40 <= c["rsi"] <= 65:
+            s += 1; why.append(f"RSI healthy {c['rsi']:.0f}")
+        if trending:
+            s += 1; why.append(f"ADX strong {c['adx']:.0f}")
+        if p["stoch_k"] < p["stoch_d"] and c["stoch_k"] > c["stoch_d"]:
+            s += 1; why.append("Stochastic turned up")
+        cands.append(("CALL", s, why))
+    if dn_trend:
+        s, why = 2, ["Downtrend (EMA21<EMA50, falling)"]
+        if c["high"] >= c["ema21"] - 0.2 * a and c["close"] < c["ema21"]:
+            s += 1; why.append("Pullback to EMA21 rejected")
+        if c["close"] < c["open"] and uw > 0.5 * body:
+            s += 1; why.append("Bearish rejection candle")
+        if 35 <= c["rsi"] <= 60:
+            s += 1; why.append(f"RSI healthy {c['rsi']:.0f}")
+        if trending:
+            s += 1; why.append(f"ADX strong {c['adx']:.0f}")
+        if p["stoch_k"] > p["stoch_d"] and c["stoch_k"] < c["stoch_d"]:
+            s += 1; why.append("Stochastic turned down")
+        cands.append(("PUT", s, why))
+
+    # B) reversal at a strong level (only when the market is NOT strongly trending)
+    if c["adx"] < 30:
+        strong_s = [lv for lv, t in supports if t >= 2 and c["low"] <= lv + 0.3 * a and price >= lv]
+        strong_r = [lv for lv, t in resistances if t >= 2 and c["high"] >= lv - 0.3 * a and price <= lv]
+        if strong_s and not dn_trend:
+            s, why = 2, [f"Strong support {strong_s[-1]:.5f}"]
+            if c["rsi"] < 32: s += 1; why.append(f"RSI oversold {c['rsi']:.0f}")
+            if c["low"] <= c["bb_low"]: s += 1; why.append("Lower Bollinger touched")
+            if lw > 1.5 * body: s += 1; why.append("Long lower wick")
+            if c["close"] > c["open"]: s += 1; why.append("Closed bullish")
+            if p["close"] < p["open"]: s += 1; why.append("After a down candle")
+            cands.append(("CALL", s, why))
+        if strong_r and not up_trend:
+            s, why = 2, [f"Strong resistance {strong_r[0]:.5f}"]
+            if c["rsi"] > 68: s += 1; why.append(f"RSI overbought {c['rsi']:.0f}")
+            if c["high"] >= c["bb_up"]: s += 1; why.append("Upper Bollinger touched")
+            if uw > 1.5 * body: s += 1; why.append("Long upper wick")
+            if c["close"] < c["open"]: s += 1; why.append("Closed bearish")
+            if p["close"] > p["open"]: s += 1; why.append("After an up candle")
+            cands.append(("PUT", s, why))
+
+    if not cands:
+        return None
+    cands.sort(key=lambda x: x[1], reverse=True)
+    d, sc, why = cands[0]
+    other = max([x[1] for x in cands if x[0] != d] or [0])
+    if sc < min_score and not force:
+        return None
+    if other >= sc:  # conflicting setups -> skip
+        return None
+    return {"direction": d, "score": sc, "max": 7, "reasons": why, "price": price,
+            "rsi": c["rsi"], "edge": sc - other}
