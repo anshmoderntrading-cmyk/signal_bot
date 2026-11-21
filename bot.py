@@ -19,6 +19,12 @@ import config
 from data import get_klines, closed_candles, is_fresh
 from strategy import analyze
 
+QX = None
+if config.DATA_SOURCE == "quotex":
+    from quotex_data import QuotexFeed
+    QX = QuotexFeed(config.QUOTEX_EMAIL, config.QUOTEX_PASSWORD)
+    get_klines = QX.get_klines  # noqa: F811  (OTC candles from Quotex)
+
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 IST = timezone(timedelta(hours=5, minutes=30))
 BTN_ON, BTN_STOP = "🟢 Signal ON", "🔴 Signal STOP"
@@ -91,7 +97,9 @@ def poll_updates():
 
 # ---------------- signals ----------------
 def market_open(now=None):
-    """Forex: open Sun 22:00 UTC – Fri 22:00 UTC."""
+    """Forex: open Sun 22:00 UTC – Fri 22:00 UTC. Quotex OTC: always open."""
+    if QX is not None:
+        return True
     now = now or datetime.now(timezone.utc)
     wd, h = now.weekday(), now.hour
     if wd == 5:
@@ -104,7 +112,9 @@ def market_open(now=None):
 
 
 def pair_name(sym):
-    return f"{sym[:3]}/{sym[3:]}"
+    base = sym.split("_")[0]
+    otc = " OTC" if sym.lower().endswith("_otc") else ""
+    return f"{base[:3]}/{base[3:]}{otc}"
 
 
 def fmt_signal(sym, direction, start, end):
@@ -122,6 +132,8 @@ def best_signal(now_ms):
         try:
             df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
             if not is_fresh(df, now_ms):
+                continue
+            if QX is not None and not QX.is_open(sym):
                 continue
             sig = analyze(df, config.MIN_SCORE, force=True)
             if not sig:
@@ -214,6 +226,11 @@ def start_web():
 if __name__ == "__main__":
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN first (token from @BotFather).")
+    if QX is not None:
+        if not (config.QUOTEX_EMAIL and config.QUOTEX_PASSWORD):
+            raise SystemExit("Put QUOTEX_EMAIL and QUOTEX_PASSWORD in the .env file.")
+        print("Logging in to Quotex... (if a code arrives by email, type it here)")
+        QX.connect()
     print("Bot running...")
     start_web()
     threading.Thread(target=scanner_loop, daemon=True).start()

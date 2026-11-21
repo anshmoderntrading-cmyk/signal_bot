@@ -2,3 +2,7 @@
 stats.json
 data/
 __pycache__/
+session.json
+settings/
+browser/
+.venv/

@@ -51,3 +51,14 @@ Push the code to GitHub → Render → New Blueprint → select the repo (render
 A free web service sleeps after 15 minutes without traffic. To stop that, go to cron-job.org or uptimerobot.com
 and set up a monitor that pings your Render URL (https://<name>.onrender.com) every 5 minutes.
 Limits of the free plan: a restart/redeploy resets stats.json (Live Stats); the 750 free hours/month are enough for 1 service.
+
+## Quotex OTC signals (run on a laptop)
+⚠️ Uses an unofficial library (pyquotex): it can break whenever Quotex changes, and Quotex may block your account. Use a demo or small account.
+1. Install Python 3.12+ (python.org; on Windows tick "Add to PATH") and Git (git-scm.com).
+2. In @BotFather, make a **new bot** for OTC (two programs can't run on the Render bot's token at once).
+3. Download this repo (GitHub → Code → Download ZIP) and extract it.
+4. Windows: double-click `run_otc.bat` → .env opens in Notepad → fill in the token, Quotex email, password → save → run `run_otc.bat` again.
+   Mac/Linux: `./run_otc.sh`
+5. On first login Quotex may send a code to your email: type it into the black window.
+6. Press 🟢 Signal ON on Telegram → "EUR/USD OTC LIVE 🟢 BUY" signals every 2 minutes.
+The bot runs only while the laptop is on and the window is open.
