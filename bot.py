@@ -77,6 +77,8 @@ def save():
 
 
 state = load()
+state.setdefault("stickers", {"win": [], "loss": []})
+pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []  # last few signalled pairs, so every signal comes from a different market
 
 
@@ -107,6 +109,13 @@ def send_photo(chat_id, png, caption="", reply_to=None):
         return False
 
 
+def send_sticker(chat_id, file_id):
+    try:
+        requests.post(f"{API}/sendSticker", json={"chat_id": chat_id, "sticker": file_id}, timeout=10)
+    except Exception as e:
+        print("sticker error:", e)
+
+
 def handle(msg):
     cid = msg["chat"]["id"]
     txt = (msg.get("text") or "").strip()
@@ -114,6 +123,26 @@ def handle(msg):
     if OTP["waiting"] and txt.isdigit() and allowed:
         OTP["code"] = txt
         send(cid, "✅ Code received, logging in to Quotex...")
+        return
+    if "sticker" in msg:  # user sends a sticker -> ask whether it is for WIN or LOSS
+        pending_sticker[cid] = msg["sticker"]["file_id"]
+        send(cid, "🎨 Sticker received!\nIs this for a WIN or a LOSS? Type: win  or  loss", keyboard=True)
+        return
+    low = txt.lower()
+    if cid in pending_sticker and low in ("win", "loss", "itm", "otm"):
+        kind = "win" if low in ("win", "itm") else "loss"
+        with lock:
+            state["stickers"][kind].append(pending_sticker.pop(cid))
+            save()
+            n = len(state["stickers"][kind])
+        send(cid, f"✅ Saved. {n} sticker(s) will now be sent after every {kind.upper()}.\n"
+                  "Add more: send another sticker. Remove all: /clearstickers", keyboard=True)
+        return
+    if low.startswith("/clearstickers"):
+        with lock:
+            state["stickers"] = {"win": [], "loss": []}
+            save()
+        send(cid, "🗑️ All stickers removed.", keyboard=True)
         return
     with lock:
         if txt == BTN_ON or txt.lower().startswith(("/start", "/on")):
@@ -242,9 +271,13 @@ def check_result(sym, sig, start_ms, msg_ids):
                               config.EXPIRY_MINUTES)
         except Exception as e:
             print("chart error:", e)
+        stickers = list(state.get("stickers", {}).get("win" if res == "win" else "loss", []))
         for cid, mid in msg_ids.items():
             if not (png and send_photo(cid, png, text, reply_to=mid)):
                 send(cid, text, reply_to=mid)
+            if res != "draw":
+                for st in stickers:
+                    send_sticker(cid, st)
 
 
 def wait_next_minute():
