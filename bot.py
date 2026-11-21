@@ -189,28 +189,32 @@ def best_signal(now_ms):
     return best
 
 
-def check_result(sym, sig, entry_close_ms, msg_ids):
-    target = entry_close_ms + config.EXPIRY_MINUTES * 60_000
-    time.sleep(max(0, (target - time.time() * 1000) / 1000) + 3)
-    exit_price = None
+def check_result(sym, sig, start_ms, msg_ids):
+    """Trade window [start, start+expiry]: entry = price at start, exit = price at end."""
+    entry_close = start_ms - 1                       # candle that closes exactly at start
+    exit_close = entry_close + config.EXPIRY_MINUTES * 60_000
+    time.sleep(max(0, (exit_close - time.time() * 1000) / 1000) + 3)
+    entry = exit_price = None
     for _ in range(12):
         try:
             df = get_klines(sym, config.INTERVAL, 10)
-            row = df[df["close_time"] == target]
-            if len(row):
-                exit_price = float(row["close"].iloc[0]); break
-        except Exception as e:
-            print("result error:", e)
+            e = df[df["close_time"] == entry_close]
+            x = df[df["close_time"] == exit_close]
+            if len(e) and len(x):
+                entry, exit_price = float(e["close"].iloc[0]), float(x["close"].iloc[0])
+                break
+        except Exception as ex:
+            print("result error:", ex)
         time.sleep(5)
     if exit_price is None:
         return
-    entry = sig["price"]
     if exit_price == entry:
         res = "draw"
     elif (exit_price > entry) == (sig["direction"] == "CALL"):
         res = "win"
     else:
         res = "loss"
+    print(time.strftime("%H:%M"), "result", sym, sig["direction"], entry, "->", exit_price, res.upper())
     with lock:
         state[res] += 1; save()
     if config.SEND_RESULTS:
@@ -231,8 +235,13 @@ def scanner_loop():
         best = best_signal(now_ms)
         if not best:
             continue
-        _, sym, sig, entry_close_ms = best
-        start = datetime.fromtimestamp((entry_close_ms + 1) / 1000, timezone.utc)
+        _, sym, sig, _ = best
+        # the trade starts at the NEXT full minute (at least 10 s after the signal is sent)
+        now = time.time()
+        start_s = (int(now) // 60 + 1) * 60
+        if start_s - now < 10:
+            start_s += 60
+        start = datetime.fromtimestamp(start_s, timezone.utc)
         end = start + timedelta(minutes=config.EXPIRY_MINUTES)
         text = fmt_signal(sym, sig["direction"], start, end)
         msg_ids = {}
@@ -240,7 +249,7 @@ def scanner_loop():
             mid = send(cid, text)
             if mid:
                 msg_ids[cid] = mid
-        threading.Thread(target=check_result, args=(sym, sig, entry_close_ms, msg_ids), daemon=True).start()
+        threading.Thread(target=check_result, args=(sym, sig, start_s * 1000, msg_ids), daemon=True).start()
 
 
 # ---------------- keep-alive web server (Render free) ----------------

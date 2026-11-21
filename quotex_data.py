@@ -59,6 +59,7 @@ class QuotexFeed:
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
         self.lock = None
+        self.cache = {}  # asset -> DataFrame (full history fetched once, then only new candles)
 
     def _run(self, coro, timeout=60):
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
@@ -89,19 +90,26 @@ class QuotexFeed:
         async with self.lock:
             if not await self.client.check_connect():
                 await self._connect()
+            cached = self.cache.get(asset)
             hist = []
-            if limit > 30:  # full history for analysis
+            if limit > 30 and (cached is None or len(cached) < 60):  # history only the first time
                 try:
                     hist = await self.client.get_historical_candles(asset, limit * 60, 60, max_workers=1) or []
                 except Exception as e:
                     print("history error", asset, e)
             recent = []
-            try:  # latest candles (most up to date)
+            try:  # latest candles (fast, most up to date)
                 recent = await self.client.get_candles(asset, time.time(), 3600, 60) or []
             except Exception as e:
                 print("recent candles error", asset, e)
-            df = candles_to_df(list(hist) + list(recent))  # recent overrides same minute
-            return df
+            new = candles_to_df(list(hist) + list(recent))  # recent overrides same minute
+            if cached is not None and len(cached):
+                new = (pd.concat([cached, new]).drop_duplicates("close_time", keep="last")
+                       .sort_values("close_time").reset_index(drop=True))
+            new = new.iloc[-max(limit, 300):].reset_index(drop=True)
+            if len(new):
+                self.cache[asset] = new
+            return new
 
     def connect_forever(self):
         """Keep trying to log in in the background (bot keeps running meanwhile)."""
