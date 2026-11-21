@@ -59,7 +59,7 @@ def trade_chart(pair, direction, df, start_ms, entry, exit_price, result, expiry
     if d.empty:
         return None
 
-    W, H = 1280, 760
+    W, H = 1280, 740
     img = Image.new("RGB", (W * S, H * S), BG_TOP)
     dr = ImageDraw.Draw(img)
     s = lambda v: v * S  # noqa: E731
@@ -118,13 +118,14 @@ def trade_chart(pair, direction, df, start_ms, entry, exit_price, result, expiry
             fs -= 2
         dr.text((s(x + 20), s(cy + 42)), v, fill=col, font=_font(fs, True))
 
-    # ---------- chart panel ----------
-    px0, py0, px1, py1 = 40, 248, W - 40, H - 64
-    dr.rounded_rectangle([s(px0), s(py0), s(px1), s(py1)], radius=s(18), fill=PANEL,
-                         outline=PANEL_EDGE, width=s(1))
-    L, R, T, B = px0 + 20, px1 - 170, py0 + 24, py1 - 44
-    lo = min(d["low"].min(), entry, exit_price)
-    hi = max(d["high"].max(), entry, exit_price)
+    # ---------- chart panel: clean candles only (broker-app style), nothing drawn on top ----------
+    CUP, CDN = (54, 192, 12), (216, 72, 56)       # bright green / red like the trading app
+    CHART_BG = (33, 38, 52)
+    d = d.tail(18).reset_index(drop=True)          # fewer candles -> bigger, clearer candles
+    px0, py0, px1, py1 = 40, 248, W - 40, H - 40
+    dr.rounded_rectangle([s(px0), s(py0), s(px1), s(py1)], radius=s(16), fill=CHART_BG)
+    L, R, T, B = px0 + 16, px1 - 120, py0 + 30, py1 - 52
+    lo, hi = d["low"].min(), d["high"].max()
     pad = (hi - lo) * 0.10 or hi * 0.0005
     lo, hi = lo - pad, hi + pad
     Y = lambda p: T + (hi - p) / (hi - lo) * (B - T)  # noqa: E731
@@ -132,67 +133,29 @@ def trade_chart(pair, direction, df, start_ms, entry, exit_price, result, expiry
     step = (R - L) / n
     X = lambda i: L + step * i + step / 2  # noqa: E731
 
-    for k in range(6):
-        p = lo + (hi - lo) * k / 5
-        dr.line([(s(L), s(Y(p))), (s(R), s(Y(p)))], fill=GRID, width=s(1))
-        dr.text((s(R + 14), s(Y(p))), fmt(p), fill=MUTED, font=_font(15), anchor="lm")
+    for k in range(4):  # price scale on the right, no grid lines over the candles
+        p = lo + (hi - lo) * (k + 0.5) / 4
+        dr.text((s(R + 18), s(Y(p))), fmt(p), fill=(214, 220, 232), font=_font(17), anchor="lm")
 
-    trade_i = None
-    for i, c in d.iterrows():
-        if start_ms <= int(c["close_time"]) < end_ms:
-            trade_i = i
-    if trade_i is not None:  # trade zone
-        zx0, zx1 = X(trade_i) - step / 2, X(trade_i) + step / 2
-        zone = Image.new("RGBA", (int(s(zx1 - zx0)), int(s(B - T))), side_col + (40,))
-        img.paste(zone, (int(s(zx0)), int(s(T))), zone)
-        dr.line([(s(zx0), s(T)), (s(zx0), s(B))], fill=side_col, width=s(2))
-        dr.line([(s(zx1), s(T)), (s(zx1), s(B))], fill=side_col, width=s(2))
-
+    bwid = step * 0.74
     for i, c in d.iterrows():
         o, h, l, cl = c["open"], c["high"], c["low"], c["close"]
-        col = GREEN if cl >= o else RED
+        col = CUP if cl >= o else CDN
         dr.line([(s(X(i)), s(Y(h))), (s(X(i)), s(Y(l)))], fill=col, width=s(2))
         top, bot = Y(max(o, cl)), Y(min(o, cl))
-        bwid = max(step * 0.62, 3)
-        dr.rounded_rectangle([s(X(i) - bwid / 2), s(top), s(X(i) + bwid / 2), s(max(bot, top + 1.5))],
-                             radius=s(2), fill=col)
-        if i % 6 == 0:
+        if bot - top < 3:
+            mid = (top + bot) / 2
+            top, bot = mid - 1.5, mid + 1.5
+        dr.rectangle([s(X(i) - bwid / 2), s(top), s(X(i) + bwid / 2), s(bot)], fill=col)
+        if i % 4 == 1:
             t = datetime.fromtimestamp((int(c["close_time"]) + 1) / 1000 - 60, timezone.utc).astimezone(IST)
-            dr.text((s(X(i)), s(B + 22)), t.strftime("%H:%M"), fill=MUTED, font=_font(15), anchor="mm")
+            dr.text((s(X(i)), s(B + 30)), t.strftime("%H:%M"), fill=(214, 220, 232), font=_font(17), anchor="mm")
 
-    # entry line + tag
-    ye, yx = Y(entry), Y(exit_price)
-    xx = L
-    while xx < R:
-        dr.line([(s(xx), s(ye)), (s(min(xx + 10, R)), s(ye))], fill=BLUE, width=s(2))
-        xx += 18
-
-    def tag(yv, text, col, fg=(10, 14, 22)):
-        dr.rounded_rectangle([s(R + 6), s(yv - 15), s(px1 - 10), s(yv + 15)], radius=s(7), fill=col)
-        dr.text((s((R + 6 + px1 - 10) / 2), s(yv)), text, fill=fg, font=_font(15, True), anchor="mm")
-
-    ty_e, ty_x = ye, yx
-    if abs(ty_x - ty_e) < 34:  # keep the two tags apart
-        if ty_x >= ty_e:
-            ty_x = ty_e + 34
-        else:
-            ty_x = ty_e - 34
-    tag(ty_e, f"ENTRY {fmt(entry)}", BLUE, (255, 255, 255))
-    tag(ty_x, f"EXIT {fmt(exit_price)}", res_col, (255, 255, 255) if result != "win" else (10, 14, 22))
-
-    if trade_i is not None:
-        xe, xx_ = X(trade_i) - step / 2, X(trade_i) + step / 2
-        dr.line([(s(xe), s(ye)), (s(xx_), s(yx))], fill=(255, 255, 255), width=s(3))
-        r = 8
-        dr.ellipse([s(xe - r), s(ye - r), s(xe + r), s(ye + r)], fill=BLUE, outline=(255, 255, 255), width=s(2))
-        dr.ellipse([s(xx_ - r), s(yx - r), s(xx_ + r), s(yx + r)], fill=res_col, outline=(255, 255, 255), width=s(2))
-        # exit line from the exit dot to its tag
-        dr.line([(s(xx_ + r), s(yx)), (s(R + 6), s(ty_x))], fill=res_col, width=s(2))
-
-    # ---------- footer ----------
-    dr.text((s(40), s(H - 32)), "Auto signal • Support/Resistance + RSI + Bollinger + EMA",
-            fill=MUTED, font=_font(16), anchor="lm")
-    dr.text((s(W - 40), s(H - 32)), "Not financial advice", fill=MUTED, font=_font(16), anchor="rm")
+    last = d.iloc[-1]  # current price pill on the scale (outside the candles)
+    yl = Y(last["close"])
+    dr.rounded_rectangle([s(R + 8), s(yl - 17), s(px1 - 8), s(yl + 17)], radius=s(17), fill=(33, 150, 243))
+    dr.text((s((R + 8 + px1 - 8) / 2), s(yl)), fmt(last["close"]), fill=(255, 255, 255),
+            font=_font(16, True), anchor="mm")
 
     out = img.resize((W, H), Image.LANCZOS)
     buf = io.BytesIO()
