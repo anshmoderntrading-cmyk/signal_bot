@@ -196,7 +196,7 @@ def pair_name(sym):
 def fmt_signal(sym, direction, start, end):
     side = "🟢 BUY" if direction == "CALL" else "🔴 SELL"
     t = lambda d: d.astimezone(IST).strftime("%I:%M %p")
-    return (f"{pair_name(sym)} LIVE {side}\n"
+    return (f"{pair_name(sym)} {side}\n"
             f"⏱️ {config.EXPIRY_MINUTES} Min\n"
             f"🕒 {t(start)} – {t(end)}")
 
