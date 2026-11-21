@@ -89,7 +89,7 @@ def trade_chart(pair, direction, df, start_ms, entry, exit_price, result, expiry
     bw = dr.textlength(lbl, font=_font(22, True)) / S + 32
     dr.rounded_rectangle([s(x0), s(42), s(x0 + bw), s(78)], radius=s(18), fill=side_col)
     dr.text((s(x0 + bw / 2), s(60)), lbl, fill=(10, 14, 22), font=_font(22, True), anchor="mm")
-    dr.text((s(40), s(92)), f"{st:%d %b %Y}  •  {expiry_min} Min Expiry  •  IST",
+    dr.text((s(40), s(92)), f"{st:%I:%M} - {en:%I:%M %p} IST  •  {expiry_min} Min Expiry  •  {st:%d %b %Y}",
             fill=MUTED, font=_font(18))
 
     # result badge (top right)
@@ -102,27 +102,11 @@ def trade_chart(pair, direction, df, start_ms, entry, exit_price, result, expiry
     dr.text((s((rx0 + rx1) / 2), s(68)), f"{sym} {word}", fill=(255, 255, 255),
             font=_font(46, True), anchor="mm")
 
-    # ---------- info cards ----------
-    move = (exit_price - entry) / _pip(pair)
-    cards = [("ENTRY", fmt(entry), BLUE), ("EXIT", fmt(exit_price), TEXT),
-             ("MOVE", f"{move:+.1f} pips", res_col),
-             ("TIME", f"{st:%I:%M} → {en:%I:%M %p}", TEXT)]
-    cx, cy, cw, ch, gap = 40, 140, (W - 80 - 3 * 16) / 4, 86, 16
-    for i, (k, v, col) in enumerate(cards):
-        x = cx + i * (cw + gap)
-        dr.rounded_rectangle([s(x), s(cy), s(x + cw), s(cy + ch)], radius=s(14), fill=PANEL,
-                             outline=PANEL_EDGE, width=s(1))
-        dr.text((s(x + 20), s(cy + 16)), k, fill=MUTED, font=_font(16, True))
-        fs = 28
-        while fs > 16 and dr.textlength(v, font=_font(fs, True)) / S > cw - 36:
-            fs -= 2
-        dr.text((s(x + 20), s(cy + 42)), v, fill=col, font=_font(fs, True))
-
     # ---------- chart panel: clean candles only (broker-app style), nothing drawn on top ----------
     CUP, CDN = (54, 192, 12), (216, 72, 56)       # bright green / red like the trading app
     CHART_BG = (33, 38, 52)
     d = d.tail(18).reset_index(drop=True)          # fewer candles -> bigger, clearer candles
-    px0, py0, px1, py1 = 40, 248, W - 40, H - 40
+    px0, py0, px1, py1 = 40, 140, W - 40, H - 40
     dr.rounded_rectangle([s(px0), s(py0), s(px1), s(py1)], radius=s(16), fill=CHART_BG)
     L, R, T, B = px0 + 16, px1 - 120, py0 + 30, py1 - 52
     lo, hi = d["low"].min(), d["high"].max()
