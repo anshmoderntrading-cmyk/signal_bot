@@ -26,7 +26,15 @@ COLS = ["open_time", "open", "high", "low", "close", "volume", "close_time"]
 
 
 def candles_to_df(candles) -> pd.DataFrame:
-    rows = [c for c in (candles or []) if isinstance(c, dict) and c.get("open") is not None]
+    rows = []
+    for c in candles or []:
+        if isinstance(c, list) and len(c) >= 5:  # [time, open, close, high, low]
+            c = {"time": c[0], "open": c[1], "close": c[2], "high": c[3], "low": c[4]}
+        if isinstance(c, dict) and c.get("open") is not None:
+            t = c.get("time", c.get("start_time"))
+            if t is not None:
+                rows.append({"time": t, "open": c["open"], "high": c["high"],
+                             "low": c["low"], "close": c["close"]})
     if not rows:
         return pd.DataFrame(columns=COLS)
     df = pd.DataFrame(rows)
@@ -63,7 +71,7 @@ class QuotexFeed:
             from pyquotex.stable_api import Quotex
             self.client = Quotex(email=self.email, password=self.password, lang="en",
                                  host=self.host, on_otp_callback=self.otp_callback)
-            print(f"Quotex host: {self.client.host}")
+            print(f"Quotex host: {getattr(self.client, 'host', '?')}")
         for attempt in range(5):
             ok, reason = await self.client.connect()
             if ok:
@@ -81,8 +89,19 @@ class QuotexFeed:
         async with self.lock:
             if not await self.client.check_connect():
                 await self._connect()
-            data = await self.client.get_candles(asset, time.time(), limit * 60, 60)
-            return candles_to_df(data)
+            hist = []
+            if limit > 30:  # full history for analysis
+                try:
+                    hist = await self.client.get_historical_candles(asset, limit * 60, 60, max_workers=1) or []
+                except Exception as e:
+                    print("history error", asset, e)
+            recent = []
+            try:  # latest candles (most up to date)
+                recent = await self.client.get_candles(asset, time.time(), 3600, 60) or []
+            except Exception as e:
+                print("recent candles error", asset, e)
+            df = candles_to_df(list(hist) + list(recent))  # recent overrides same minute
+            return df
 
     def connect_forever(self):
         """Keep trying to log in in the background (bot keeps running meanwhile)."""
