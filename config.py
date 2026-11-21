@@ -57,6 +57,7 @@ MIN_SCORE_V2 = _int_env("MIN_SCORE_V2", 5)    # strategy v2 threshold (0-7); hig
 # QUALITY_ONLY=0: always send the best available setup every cycle (more signals, more losses)
 QUALITY_ONLY = os.getenv("QUALITY_ONLY", "1") != "0"
 # skip a pair when its recent live record is bad (after PAIR_MIN_TRADES trades, win% below PAIR_MIN_WINRATE)
+MIN_PAYOUT = _int_env("MIN_PAYOUT", 85)  # Quotex: skip pairs whose payout % is below this
 PAIR_MIN_TRADES = _int_env("PAIR_MIN_TRADES", 8)
 PAIR_MIN_WINRATE = _int_env("PAIR_MIN_WINRATE", 45)
 SEND_RESULTS = os.getenv("SEND_RESULTS", "1") != "0"  # short WIN/LOSS reply after expiry (0 = off)

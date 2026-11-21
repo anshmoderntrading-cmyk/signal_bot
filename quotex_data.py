@@ -132,6 +132,29 @@ class QuotexFeed:
             _, info = await self.client.check_asset_open(asset)
             return bool(info[2])
 
+    async def _payout(self, asset):
+        async with self.lock:
+            await self.client.get_instruments()
+            p = self.client.get_payout_by_asset(asset, "1")  # 1-minute payout %
+            if p in (None, "", 0):
+                for i in (self.client.api.instruments or []):
+                    if i[1] == asset:
+                        p = i[5]
+                        break
+            try:
+                p = float(p)
+            except (TypeError, ValueError):
+                return None
+            return p * 100 if 0 < p <= 1 else p
+
+    def payout(self, asset):
+        """Current payout % for 1-minute trades, or None if unknown."""
+        try:
+            return self._run(self._payout(asset), timeout=30)
+        except Exception as e:
+            print("payout error", asset, e)
+            return None
+
     def is_open(self, asset):
         try:
             return self._run(self._is_open(asset), timeout=30)

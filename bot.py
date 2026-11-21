@@ -236,7 +236,8 @@ def pair_is_weak(sym):
 def best_signal(now_ms):
     """Scan all pairs and pick the strongest setup."""
     best = None
-    stats = {"ok": 0, "stale": 0, "closed": 0, "no_setup": 0, "error": 0, "few_candles": 0, "weak_pair": 0}
+    stats = {"ok": 0, "stale": 0, "closed": 0, "no_setup": 0, "error": 0, "few_candles": 0, "weak_pair": 0, "low_payout": 0}
+    payouts = {}
     for sym in current_symbols():
         try:
             df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
@@ -249,6 +250,12 @@ def best_signal(now_ms):
             if QX is not None and not QX.is_open(sym):
                 stats["closed"] += 1
                 continue
+            if QX is not None:
+                pay = QX.payout(sym)
+                payouts[sym.replace("_otc", "")] = "?" if pay is None else int(pay)
+                if pay is None or pay < config.MIN_PAYOUT:
+                    stats["low_payout"] += 1
+                    continue
             if pair_is_weak(sym):
                 stats["weak_pair"] += 1
                 continue
@@ -270,6 +277,8 @@ def best_signal(now_ms):
             print("scan error", sym, e)
     pick = f" -> {best[1]} {best[2]['direction']}" if best else " -> no signal"
     print(time.strftime("%H:%M"), "scan:", stats, pick)
+    if payouts:
+        print("   payout %:", payouts)
     return best
 
 
