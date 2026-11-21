@@ -78,7 +78,7 @@ def support_resistance(df: pd.DataFrame, lookback=120, left=3, right=3, tol_atr=
     return cluster(piv_l), cluster(piv_h)
 
 
-def analyze(df: pd.DataFrame, min_score: int = 4):
+def analyze(df: pd.DataFrame, min_score: int = 4, force: bool = False):
     """df = CLOSED candles only. Returns signal dict or None."""
     if len(df) < 60:
         return None
@@ -143,8 +143,12 @@ def analyze(df: pd.DataFrame, min_score: int = 4):
     max_score = 8
     if call >= min_score and call - put >= 2:
         return {"direction": "CALL", "score": call, "max": max_score, "reasons": why_c,
-                "price": price, "rsi": c["rsi"]}
+                "price": price, "rsi": c["rsi"], "edge": call - put}
     if put >= min_score and put - call >= 2:
         return {"direction": "PUT", "score": put, "max": max_score, "reasons": why_p,
-                "price": price, "rsi": c["rsi"]}
+                "price": price, "rsi": c["rsi"], "edge": put - call}
+    if force and call != put:  # always give the stronger side (auto mode)
+        d, sc, why = ("CALL", call, why_c) if call > put else ("PUT", put, why_p)
+        return {"direction": d, "score": sc, "max": max_score, "reasons": why,
+                "price": price, "rsi": c["rsi"], "edge": abs(call - put)}
     return None

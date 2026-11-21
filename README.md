@@ -11,8 +11,14 @@ Live Binance market data → Support/Resistance + indicator strategy → signal 
    python bot.py
 4. Send `/start` to your bot on Telegram.
 
-## Commands
-/start – start receiving signals · /stop – stop · /stats – win/loss/accuracy · /scan – check right now · /coins – list of coins
+## Buttons
+🟢 Signal ON → an automatic signal every 2 minutes (SIGNAL_EVERY_MINUTES)
+🔴 Signal STOP → signals stop
+Format:
+  AUD/JPY LIVE 🟢 BUY
+  ⏱️ 1 Min
+  🕒 03:24 PM – 03:25 PM
+After expiry, a short ✅ WIN / ❌ LOSS reply (turn off with SEND_RESULTS=0). Forex pairs only.
 
 ## Pairs
 Forex: EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, EURJPY, XAUUSD (gold), via Yahoo Finance (no key needed)

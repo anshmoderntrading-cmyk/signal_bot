@@ -1,88 +1,79 @@
 """
-Telegram Signal Bot: live Binance data -> strategy -> signal -> result after expiry.
-Run:  TELEGRAM_BOT_TOKEN=xxxx python bot.py
-Commands: /start  /stop  /stats  /scan  /coins
+Forex Signal Bot: only 2 buttons (Signal ON / Signal STOP).
+While ON, a signal arrives automatically every SIGNAL_EVERY_MINUTES minutes:
+
+  AUD/JPY LIVE 🟢 BUY
+  ⏱️ 1 Min
+  🕒 03:24 PM – 03:25 PM
 """
 import json
 import os
 import threading
 import time
 from datetime import datetime, timezone, timedelta
-
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
 
 import config
-from data import get_klines, closed_candles, is_fresh, is_crypto
+from data import get_klines, closed_candles, is_fresh
 from strategy import analyze
 
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 IST = timezone(timedelta(hours=5, minutes=30))
+BTN_ON, BTN_STOP = "🟢 Signal ON", "🔴 Signal STOP"
+KEYBOARD = {"keyboard": [[{"text": BTN_ON}, {"text": BTN_STOP}]], "resize_keyboard": True}
 lock = threading.Lock()
 
 
 # ---------------- storage ----------------
 def load():
     if os.path.exists(config.STATS_FILE):
-        with open(config.STATS_FILE) as f:
-            return json.load(f)
-    return {"subscribers": [], "win": 0, "loss": 0, "draw": 0, "history": []}
+        try:
+            with open(config.STATS_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"subscribers": [], "win": 0, "loss": 0, "draw": 0}
 
 
 def save():
     with open(config.STATS_FILE, "w") as f:
-        json.dump(state, f, indent=1)
+        json.dump(state, f)
 
 
 state = load()
-last_signal_time = {}
 
 
 # ---------------- telegram ----------------
-def send(chat_id, text):
+def send(chat_id, text, reply_to=None, keyboard=False):
+    payload = {"chat_id": chat_id, "text": text}
+    if reply_to:
+        payload["reply_to_message_id"] = reply_to
+    if keyboard:
+        payload["reply_markup"] = KEYBOARD
     try:
-        requests.post(f"{API}/sendMessage",
-                      json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=10)
+        r = requests.post(f"{API}/sendMessage", json=payload, timeout=10).json()
+        return r.get("result", {}).get("message_id")
     except Exception as e:
         print("send error:", e)
 
 
-def broadcast(text):
-    for cid in list(state["subscribers"]):
-        send(cid, text)
-
-
-def stats_text():
-    w, l, d = state["win"], state["loss"], state["draw"]
-    t = w + l
-    acc = 100 * w / t if t else 0
-    last = state["history"][-10:]
-    lines = "\n".join(f"{h['symbol']} {h['direction']} → {h['result']}" for h in last) or "—"
-    return (f"📊 <b>Live Stats</b>\nTotal: {t + d} | ✅ Win: {w} | ❌ Loss: {l} | ➖ Draw: {d}\n"
-            f"🎯 Accuracy: <b>{acc:.1f}%</b>\n\nLast 10:\n{lines}")
-
-
 def handle(msg):
     cid = msg["chat"]["id"]
-    txt = (msg.get("text") or "").strip().lower()
+    txt = (msg.get("text") or "").strip()
     with lock:
-        if txt.startswith("/start"):
+        if txt == BTN_ON or txt.lower().startswith(("/start", "/on")):
             if cid not in state["subscribers"]:
                 state["subscribers"].append(cid); save()
-            send(cid, "✅ Subscribed! Every minute the market is scanned and signals land here.\n"
-                      "Commands: /stats /scan /coins /stop\n\n"
-                      "⚠️ This is not financial advice. Trade with risk management.")
-        elif txt.startswith("/stop"):
+            note = "" if market_open() else "\n⚠️ The forex market is closed right now (weekend). Signals will start when it opens."
+            send(cid, f"✅ Signal ON\nA signal every {config.SIGNAL_EVERY_MINUTES} min.{note}", keyboard=True)
+        elif txt == BTN_STOP or txt.lower().startswith(("/stop", "/off")):
             if cid in state["subscribers"]:
                 state["subscribers"].remove(cid); save()
-            send(cid, "🛑 Unsubscribed.")
-        elif txt.startswith("/stats"):
-            send(cid, stats_text())
-        elif txt.startswith("/coins"):
-            send(cid, "Scanning: " + ", ".join(config.SYMBOLS))
-        elif txt.startswith("/scan"):
-            threading.Thread(target=manual_scan, args=(cid,), daemon=True).start()
+            send(cid, "⛔ Signal STOP", keyboard=True)
+        else:
+            send(cid, "Use the button 👇", keyboard=True)
 
 
 def poll_updates():
@@ -99,128 +90,122 @@ def poll_updates():
 
 
 # ---------------- signals ----------------
-def fp(x):
-    return f"{x:.2f}" if x >= 1000 else f"{x:.5f}"
-
-
-def fmt_signal(sym, sig, entry_time, expiry_time):
-    market = "Crypto" if is_crypto(sym) else "Forex"
-    arrow = "🟢 CALL (UP) ⬆️" if sig["direction"] == "CALL" else "🔴 PUT (DOWN) ⬇️"
-    conf = int(100 * sig["score"] / sig["max"])
-    reasons = "\n".join("• " + r for r in sig["reasons"])
-    return (f"📢 <b>NEW SIGNAL</b>\n\n💱 Pair: <b>{sym}</b> ({market})\n📈 Direction: <b>{arrow}</b>\n"
-            f"💰 Entry price: {fp(sig['price'])}\n"
-            f"🕐 Entry: {entry_time.astimezone(IST):%H:%M:%S} IST\n"
-            f"⏳ Expiry: {config.EXPIRY_MINUTES} min ({expiry_time.astimezone(IST):%H:%M:%S} IST)\n"
-            f"⭐ Strength: {sig['score']}/{sig['max']} ({conf}%)\n\n<b>Reasons:</b>\n{reasons}")
-
-
-def check_result(sym, sig, entry_close_ms):
-    """Wait for expiry, then compare the expiry candle's close with the entry."""
-    target_close = entry_close_ms + config.EXPIRY_MINUTES * 60_000
-    time.sleep(max(0, (target_close - time.time() * 1000) / 1000) + 3)
-    exit_price = None
-    for _ in range(12):  # forex data can lag a few seconds
-        try:
-            df = get_klines(sym, config.INTERVAL, 10)
-            row = df[df["close_time"] == target_close]
-            if len(row):
-                exit_price = float(row["close"].iloc[0]); break
-        except Exception as e:
-            print("result fetch error:", e)
-        time.sleep(5)
-    if exit_price is None:
-        broadcast(f"⚠️ {sym}: could not fetch the result price."); return
-    entry = sig["price"]
-    if exit_price == entry:
-        res, icon = "DRAW", "➖"
-    elif (exit_price > entry) == (sig["direction"] == "CALL"):
-        res, icon = "WIN", "✅"
-    else:
-        res, icon = "LOSS", "❌"
-    pct = (exit_price - entry) / entry * 100
-    with lock:
-        state[res.lower()] += 1
-        state["history"].append({"symbol": sym, "direction": sig["direction"], "entry": entry,
-                                 "exit": exit_price, "result": res, "time": int(time.time())})
-        state["history"] = state["history"][-500:]
-        save()
-        w, l = state["win"], state["loss"]
-    acc = 100 * w / (w + l) if w + l else 0
-    broadcast(f"{icon} <b>RESULT: {res}</b>\n💱 {sym} {sig['direction']}\n"
-              f"Entry: {fp(entry)} → Exit: {fp(exit_price)} ({pct:+.3f}%)\n"
-              f"📊 Overall accuracy: {acc:.1f}% ({w}W / {l}L)")
-
-
-def scan_symbol(sym, now_ms, force_chat=None):
-    df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
-    if not is_fresh(df, now_ms):
-        return False  # market closed (forex weekend) / stale data
-    sig = analyze(df, config.MIN_SCORE)
-    if not sig:
+def market_open(now=None):
+    """Forex: open Sun 22:00 UTC – Fri 22:00 UTC."""
+    now = now or datetime.now(timezone.utc)
+    wd, h = now.weekday(), now.hour
+    if wd == 5:
         return False
-    if force_chat is None:
-        last = last_signal_time.get(sym, 0)
-        if now_ms - last < config.COOLDOWN_MINUTES * 60_000:
-            return False
-        last_signal_time[sym] = now_ms
-    entry_close_ms = int(df["close_time"].iloc[-1])
-    entry_time = datetime.fromtimestamp((entry_close_ms + 1) / 1000, timezone.utc)
-    expiry_time = entry_time + timedelta(minutes=config.EXPIRY_MINUTES)
-    text = fmt_signal(sym, sig, entry_time, expiry_time)
-    if force_chat is None:
-        broadcast(text)
-        threading.Thread(target=check_result, args=(sym, sig, entry_close_ms), daemon=True).start()
-    else:
-        send(force_chat, text + "\n\n(manual scan: result not tracked)")
+    if wd == 4 and h >= 22:
+        return False
+    if wd == 6 and h < 22:
+        return False
     return True
 
 
-def manual_scan(cid):
-    now = int(time.time() * 1000)
-    found = False
-    for s in config.SYMBOLS:
+def pair_name(sym):
+    return f"{sym[:3]}/{sym[3:]}"
+
+
+def fmt_signal(sym, direction, start, end):
+    side = "🟢 BUY" if direction == "CALL" else "🔴 SELL"
+    t = lambda d: d.astimezone(IST).strftime("%I:%M %p")
+    return (f"{pair_name(sym)} LIVE {side}\n"
+            f"⏱️ {config.EXPIRY_MINUTES} Min\n"
+            f"🕒 {t(start)} – {t(end)}")
+
+
+def best_signal(now_ms):
+    """Scan all pairs and pick the strongest setup."""
+    best = None
+    for sym in config.SYMBOLS:
         try:
-            found |= scan_symbol(s.strip(), now, force_chat=cid)
+            df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
+            if not is_fresh(df, now_ms):
+                continue
+            sig = analyze(df, config.MIN_SCORE, force=True)
+            if not sig:
+                continue
+            key = (sig["score"], sig["edge"])
+            if best is None or key > best[0]:
+                best = (key, sym, sig, int(df["close_time"].iloc[-1]))
         except Exception as e:
-            print(s, e)
-    if not found:
-        send(cid, "🔍 No strong setup right now. Wait for the next candle.")
+            print("scan error", sym, e)
+    return best
+
+
+def check_result(sym, sig, entry_close_ms, msg_ids):
+    target = entry_close_ms + config.EXPIRY_MINUTES * 60_000
+    time.sleep(max(0, (target - time.time() * 1000) / 1000) + 3)
+    exit_price = None
+    for _ in range(12):
+        try:
+            df = get_klines(sym, config.INTERVAL, 10)
+            row = df[df["close_time"] == target]
+            if len(row):
+                exit_price = float(row["close"].iloc[0]); break
+        except Exception as e:
+            print("result error:", e)
+        time.sleep(5)
+    if exit_price is None:
+        return
+    entry = sig["price"]
+    if exit_price == entry:
+        res = "draw"
+    elif (exit_price > entry) == (sig["direction"] == "CALL"):
+        res = "win"
+    else:
+        res = "loss"
+    with lock:
+        state[res] += 1; save()
+    if config.SEND_RESULTS:
+        text = {"win": "✅ WIN", "loss": "❌ LOSS", "draw": "➖ DRAW"}[res]
+        for cid, mid in msg_ids.items():
+            send(cid, text, reply_to=mid)
 
 
 def scanner_loop():
     while True:
-        # run 1 second after every minute closes
-        time.sleep(60 - (time.time() % 60) + 1)
-        if not state["subscribers"]:
+        time.sleep(60 - (time.time() % 60) + 1)   # 1 second after each candle closes
+        minute = int(time.time() // 60)
+        if minute % config.SIGNAL_EVERY_MINUTES:
             continue
-        now = int(time.time() * 1000)
-        for s in config.SYMBOLS:
-            try:
-                scan_symbol(s.strip(), now)
-            except Exception as e:
-                print("scan error", s, e)
+        if not state["subscribers"] or not market_open():
+            continue
+        now_ms = int(time.time() * 1000)
+        best = best_signal(now_ms)
+        if not best:
+            continue
+        _, sym, sig, entry_close_ms = best
+        start = datetime.fromtimestamp((entry_close_ms + 1) / 1000, timezone.utc)
+        end = start + timedelta(minutes=config.EXPIRY_MINUTES)
+        text = fmt_signal(sym, sig["direction"], start, end)
+        msg_ids = {}
+        for cid in list(state["subscribers"]):
+            mid = send(cid, text)
+            if mid:
+                msg_ids[cid] = mid
+        threading.Thread(target=check_result, args=(sym, sig, entry_close_ms, msg_ids), daemon=True).start()
 
 
-# ---------------- keep-alive web server (Render free web service) ----------------
+# ---------------- keep-alive web server (Render free) ----------------
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = f"OK - bot running | subscribers: {len(state['subscribers'])}".encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
+        w, l = state["win"], state["loss"]
+        acc = 100 * w / (w + l) if w + l else 0
+        body = f"OK | subscribers: {len(state['subscribers'])} | W {w} / L {l} | {acc:.1f}%".encode()
+        self.send_response(200); self.send_header("Content-Type", "text/plain"); self.end_headers()
         self.wfile.write(body)
 
     def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
+        self.send_response(200); self.end_headers()
 
-    def log_message(self, *args):
+    def log_message(self, *a):
         pass
 
 
 def start_web():
-    port = int(os.getenv("PORT", "0"))
+    port = int(os.getenv("PORT", "0") or 0)
     if port:
         threading.Thread(target=HTTPServer(("0.0.0.0", port), Health).serve_forever, daemon=True).start()
         print(f"Health server on port {port}")
@@ -229,7 +214,7 @@ def start_web():
 if __name__ == "__main__":
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN first (token from @BotFather).")
-    print("Bot running... send /start to your bot on Telegram")
+    print("Bot running...")
     start_web()
     threading.Thread(target=scanner_loop, daemon=True).start()
     poll_updates()

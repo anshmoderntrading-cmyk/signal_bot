@@ -11,7 +11,7 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false            # enter it in the Render dashboard
       - key: SYMBOLS
-        value: EURUSD,GBPUSD,USDJPY,AUDUSD,BTCUSDT,ETHUSDT
+        value: EURUSD,GBPUSD,USDJPY,AUDUSD,AUDJPY,EURJPY,GBPJPY,USDCAD,NZDUSD,EURGBP
       - key: EXPIRY_MINUTES
         value: "1"
       - key: MIN_SCORE
