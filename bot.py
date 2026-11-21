@@ -20,9 +20,35 @@ from data import get_klines, closed_candles, is_fresh
 from strategy import analyze
 
 QX = None
-if config.DATA_SOURCE == "quotex":
+OTP = {"waiting": False, "code": None}
+
+
+async def ask_otp_on_telegram(message):
+    """Quotex sent a login code to your email: ask for it on Telegram and wait."""
+    import asyncio
+    OTP.update(waiting=True, code=None)
+    targets = [config.ADMIN_CHAT_ID] if config.ADMIN_CHAT_ID else list(state["subscribers"])
+    print("Quotex OTP needed. Waiting for the code on Telegram... (send /start to the bot if no one is subscribed)")
+    asked = set()
+    for _ in range(600):  # up to 10 minutes
+        for cid in (targets or list(state["subscribers"])):
+            if cid not in asked:
+                send(cid, "🔐 Quotex sent a login code to your email.\nType that code here (numbers only).")
+                asked.add(cid)
+        if OTP["code"]:
+            OTP["waiting"] = False
+            return OTP["code"]
+        await asyncio.sleep(1)
+    OTP["waiting"] = False
+    return ""
+
+
+if config.DATA_SOURCE == "quotex" and not (config.QUOTEX_EMAIL and config.QUOTEX_PASSWORD):
+    print("WARNING: DATA_SOURCE=quotex but QUOTEX_EMAIL/QUOTEX_PASSWORD are not set -> using real forex.")
+    config.SYMBOLS = [s.replace("_otc", "") for s in config.SYMBOLS]
+elif config.DATA_SOURCE == "quotex":
     from quotex_data import QuotexFeed
-    QX = QuotexFeed(config.QUOTEX_EMAIL, config.QUOTEX_PASSWORD)
+    QX = QuotexFeed(config.QUOTEX_EMAIL, config.QUOTEX_PASSWORD, otp_callback=ask_otp_on_telegram)
     get_klines = QX.get_klines  # noqa: F811  (OTC candles from Quotex)
 
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -68,6 +94,11 @@ def send(chat_id, text, reply_to=None, keyboard=False):
 def handle(msg):
     cid = msg["chat"]["id"]
     txt = (msg.get("text") or "").strip()
+    allowed = (cid == config.ADMIN_CHAT_ID) if config.ADMIN_CHAT_ID else (cid in state["subscribers"])
+    if OTP["waiting"] and txt.isdigit() and allowed:
+        OTP["code"] = txt
+        send(cid, "✅ Code received, logging in to Quotex...")
+        return
     with lock:
         if txt == BTN_ON or txt.lower().startswith(("/start", "/on")):
             if cid not in state["subscribers"]:
@@ -226,12 +257,10 @@ def start_web():
 if __name__ == "__main__":
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Set TELEGRAM_BOT_TOKEN first (token from @BotFather).")
-    if QX is not None:
-        if not (config.QUOTEX_EMAIL and config.QUOTEX_PASSWORD):
-            raise SystemExit("Put QUOTEX_EMAIL and QUOTEX_PASSWORD in the .env file.")
-        print("Logging in to Quotex... (if a code arrives by email, type it here)")
-        QX.connect()
     print("Bot running...")
     start_web()
+    if QX is not None:
+        print("Logging in to Quotex... (if a code arrives by email, send it to the bot on Telegram)")
+        QX.connect_forever()
     threading.Thread(target=scanner_loop, daemon=True).start()
     poll_updates()

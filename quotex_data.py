@@ -30,8 +30,10 @@ def candles_to_df(candles) -> pd.DataFrame:
 
 
 class QuotexFeed:
-    def __init__(self, email, password, client=None):
+    def __init__(self, email, password, client=None, otp_callback=None):
         self.email, self.password = email, password
+        self.otp_callback = otp_callback  # async fn(message) -> code (e.g. asked on Telegram)
+        self.connected = False
         self.client = client
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
@@ -45,11 +47,13 @@ class QuotexFeed:
             self.lock = asyncio.Lock()
         if self.client is None:
             from pyquotex.stable_api import Quotex
-            self.client = Quotex(email=self.email, password=self.password, lang="en")
+            self.client = Quotex(email=self.email, password=self.password, lang="en",
+                                 on_otp_callback=self.otp_callback)
         for attempt in range(5):
             ok, reason = await self.client.connect()
             if ok:
                 print("Quotex connected")
+                self.connected = True
                 return True
             print(f"Quotex login failed ({reason}), retry {attempt + 1}/5")
             await asyncio.sleep(5 * (attempt + 1))
@@ -65,7 +69,20 @@ class QuotexFeed:
             data = await self.client.get_candles(asset, time.time(), limit * 60, 60)
             return candles_to_df(data)
 
+    def connect_forever(self):
+        """Keep trying to log in in the background (bot keeps running meanwhile)."""
+        def worker():
+            while not self.connected:
+                try:
+                    self.connect()
+                except Exception as e:
+                    print("Quotex connect error:", e)
+                    time.sleep(60)
+        threading.Thread(target=worker, daemon=True).start()
+
     def get_klines(self, asset, interval="1m", limit=300):
+        if not self.connected:
+            raise RuntimeError("Quotex not connected yet")
         return self._run(self._candles(asset, limit)).iloc[-limit:]
 
     async def _is_open(self, asset):

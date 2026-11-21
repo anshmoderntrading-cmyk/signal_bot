@@ -32,6 +32,9 @@ DATA_SOURCE = os.getenv("DATA_SOURCE", "forex").strip().lower()
 QUOTEX_EMAIL = os.getenv("QUOTEX_EMAIL", "").strip()
 QUOTEX_PASSWORD = os.getenv("QUOTEX_PASSWORD", "").strip()
 
+# Optional: only this Telegram chat may enter the Quotex OTP (your own chat id)
+ADMIN_CHAT_ID = _int_env("ADMIN_CHAT_ID", 0)
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 # Forex pairs only
