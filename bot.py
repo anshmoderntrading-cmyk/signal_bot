@@ -76,6 +76,7 @@ def save():
 
 
 state = load()
+recent_pairs = []  # last few signalled pairs, so every signal comes from a different market
 
 
 # ---------------- telegram ----------------
@@ -178,7 +179,8 @@ def best_signal(now_ms):
                 stats["no_setup"] += 1
                 continue
             stats["ok"] += 1
-            key = (sig["score"], sig["edge"])
+            fresh = sym not in recent_pairs  # prefer a market we haven't just used
+            key = (fresh, sig["score"], sig["edge"])
             if best is None or key > best[0]:
                 best = (key, sym, sig, int(df["close_time"].iloc[-1]))
         except Exception as e:
@@ -236,6 +238,8 @@ def scanner_loop():
         if not best:
             continue
         _, sym, sig, _ = best
+        recent_pairs.append(sym)
+        del recent_pairs[:-config.NO_REPEAT_LAST]
         # the trade starts at the NEXT full minute (at least 10 s after the signal is sent)
         now = time.time()
         start_s = (int(now) // 60 + 1) * 60

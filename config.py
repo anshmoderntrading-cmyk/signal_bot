@@ -47,7 +47,8 @@ if DATA_SOURCE == "quotex":  # Quotex OTC names: EURUSD_otc
 
 INTERVAL = "1m"
 EXPIRY_MINUTES = _int_env("EXPIRY_MINUTES", 1)       # trade expiry
-SIGNAL_EVERY_MINUTES = _int_env("SIGNAL_EVERY_MINUTES", 2)  # an automatic signal every N minutes
+SIGNAL_EVERY_MINUTES = max(1, _int_env("SIGNAL_EVERY_MINUTES", 1))  # an automatic signal every N minutes
+NO_REPEAT_LAST = max(0, _int_env("NO_REPEAT_LAST", 3))  # don't repeat a pair used in the last N signals
 MIN_SCORE = _int_env("MIN_SCORE", 4)
 SEND_RESULTS = os.getenv("SEND_RESULTS", "1") != "0"  # short WIN/LOSS reply after expiry (0 = off)
 
