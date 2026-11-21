@@ -213,8 +213,8 @@ def forex_week_open(now=None):
 
 def pair_name(sym):
     base = sym.split("_")[0]
-    otc = " OTC" if sym.lower().endswith("_otc") else ""
-    return f"{base[:3]}/{base[3:]}{otc}"
+    tag = " OTC" if sym.lower().endswith("_otc") else " LIVE"
+    return f"{base[:3]}/{base[3:]}{tag}"
 
 
 def fmt_signal(sym, direction, start, end):
