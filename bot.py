@@ -160,21 +160,32 @@ def fmt_signal(sym, direction, start, end):
 def best_signal(now_ms):
     """Scan all pairs and pick the strongest setup."""
     best = None
+    stats = {"ok": 0, "stale": 0, "closed": 0, "no_setup": 0, "error": 0, "few_candles": 0}
     for sym in config.SYMBOLS:
         try:
             df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
+            if len(df) < 60:
+                stats["few_candles"] += 1
+                continue
             if not is_fresh(df, now_ms):
+                stats["stale"] += 1
                 continue
             if QX is not None and not QX.is_open(sym):
+                stats["closed"] += 1
                 continue
             sig = analyze(df, config.MIN_SCORE, force=True)
             if not sig:
+                stats["no_setup"] += 1
                 continue
+            stats["ok"] += 1
             key = (sig["score"], sig["edge"])
             if best is None or key > best[0]:
                 best = (key, sym, sig, int(df["close_time"].iloc[-1]))
         except Exception as e:
+            stats["error"] += 1
             print("scan error", sym, e)
+    pick = f" -> {best[1]} {best[2]['direction']}" if best else " -> no signal"
+    print(time.strftime("%H:%M"), "scan:", stats, pick)
     return best
 
 
