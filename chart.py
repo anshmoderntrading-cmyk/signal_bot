@@ -78,16 +78,9 @@ def trade_chart(pair, direction, df, start_ms, entry, exit_price, result, expiry
     en = datetime.fromtimestamp(end_ms / 1000, timezone.utc).astimezone(IST)
 
     # ---------- header ----------
-    tag = "OTC" if pair.endswith(" OTC") else ("LIVE" if pair.endswith(" LIVE") else "")
-    base = pair.rsplit(" ", 1)[0] if tag else pair
-    dr.text((s(40), s(34)), base, fill=TEXT, font=_font(44, True))
-    x0 = 40 + dr.textlength(base, font=_font(44, True)) / S + 16
-    if tag:
-        tw = dr.textlength(tag, font=_font(18, True)) / S + 24
-        tcol = GOLD if tag == "OTC" else (77, 220, 255)
-        dr.rounded_rectangle([s(x0), s(44), s(x0 + tw), s(76)], radius=s(8), fill=(52, 63, 92))
-        dr.text((s(x0 + tw / 2), s(60)), tag, fill=tcol, font=_font(18, True), anchor="mm")
-        x0 += tw + 12
+    # pair name with OTC / LIVE written right next to it (plain text, no separate badge)
+    dr.text((s(40), s(34)), pair, fill=TEXT, font=_font(44, True))
+    x0 = 40 + dr.textlength(pair, font=_font(44, True)) / S + 18
     lbl = ("BUY  ▲" if up else "SELL  ▼")
     bw = dr.textlength(lbl, font=_font(22, True)) / S + 32
     dr.rounded_rectangle([s(x0), s(42), s(x0 + bw), s(78)], radius=s(18), fill=side_col)
