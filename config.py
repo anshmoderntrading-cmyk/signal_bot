@@ -31,6 +31,8 @@ _load_dotenv()
 DATA_SOURCE = os.getenv("DATA_SOURCE", "forex").strip().lower()
 QUOTEX_EMAIL = os.getenv("QUOTEX_EMAIL", "").strip()
 QUOTEX_PASSWORD = os.getenv("QUOTEX_PASSWORD", "").strip()
+# Quotex website domain (whichever one opens Quotex for you in the browser), e.g. qxbroker.com
+QUOTEX_HOST = os.getenv("QUOTEX_HOST", "").strip().replace("https://", "").replace("http://", "").strip("/")
 
 # Optional: only this Telegram chat may enter the Quotex OTP (your own chat id)
 ADMIN_CHAT_ID = _int_env("ADMIN_CHAT_ID", 0)

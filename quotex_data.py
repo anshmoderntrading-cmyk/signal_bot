@@ -42,8 +42,9 @@ def candles_to_df(candles) -> pd.DataFrame:
 
 
 class QuotexFeed:
-    def __init__(self, email, password, client=None, otp_callback=None):
+    def __init__(self, email, password, client=None, otp_callback=None, host=None):
         self.email, self.password = email, password
+        self.host = host or None
         self.otp_callback = otp_callback  # async fn(message) -> code (e.g. asked on Telegram)
         self.connected = False
         self.client = client
@@ -61,7 +62,8 @@ class QuotexFeed:
             _patch_curl_cffi()
             from pyquotex.stable_api import Quotex
             self.client = Quotex(email=self.email, password=self.password, lang="en",
-                                 on_otp_callback=self.otp_callback)
+                                 host=self.host, on_otp_callback=self.otp_callback)
+            print(f"Quotex host: {self.client.host}")
         for attempt in range(5):
             ok, reason = await self.client.connect()
             if ok:

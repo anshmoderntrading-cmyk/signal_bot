@@ -48,7 +48,8 @@ if config.DATA_SOURCE == "quotex" and not (config.QUOTEX_EMAIL and config.QUOTEX
     config.SYMBOLS = [s.replace("_otc", "") for s in config.SYMBOLS]
 elif config.DATA_SOURCE == "quotex":
     from quotex_data import QuotexFeed
-    QX = QuotexFeed(config.QUOTEX_EMAIL, config.QUOTEX_PASSWORD, otp_callback=ask_otp_on_telegram)
+    QX = QuotexFeed(config.QUOTEX_EMAIL, config.QUOTEX_PASSWORD, otp_callback=ask_otp_on_telegram,
+                    host=config.QUOTEX_HOST)
     get_klines = QX.get_klines  # noqa: F811  (OTC candles from Quotex)
 
 API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
