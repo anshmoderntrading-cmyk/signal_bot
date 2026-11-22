@@ -121,6 +121,7 @@ def save():
 state = load()
 state.setdefault("stickers", {"win": [], "loss": []})
 state.setdefault("mode", "otc")
+state.setdefault("admins", [])  # chat ids added by the owner
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []  # last few signalled pairs, so every signal comes from a different market
@@ -160,9 +161,15 @@ def send_sticker(chat_id, file_id):
         print("sticker error:", e)
 
 
+def is_owner(cid):
+    return bool(config.OWNER_ID) and cid == config.OWNER_ID
+
+
 def is_admin(cid):
-    """ADMIN_CHAT_ID set -> only that chat may change settings; not set -> everyone (single-user bot)."""
-    return not config.ADMIN_CHAT_ID or cid == config.ADMIN_CHAT_ID
+    """Owner + admins added by the owner may change settings. No owner set -> everyone (single-user bot)."""
+    if not config.OWNER_ID:
+        return True
+    return is_owner(cid) or cid in state.get("admins", [])
 
 
 def current_expiry(sig=None):
@@ -196,6 +203,8 @@ def handle(msg):
         send(cid, "✅ Code received, logging in to Quotex...")
         return
     if "sticker" in msg:  # user sends a sticker -> ask whether it is for WIN or LOSS
+        if not is_admin(cid):
+            return
         pending_sticker[cid] = msg["sticker"]["file_id"]
         send(cid, "🎨 Sticker received!\nIs this for a WIN or a LOSS? Type: win  or  loss", keyboard=True)
         return
@@ -210,6 +219,8 @@ def handle(msg):
                   "Add more: send another sticker. Remove all: /clearstickers", keyboard=True)
         return
     if low.startswith("/clearstickers"):
+        if not is_admin(cid):
+            send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
         with lock:
             state["stickers"] = {"win": [], "loss": []}
             save()
@@ -229,9 +240,30 @@ def handle(msg):
             state["expiry"] = EXPIRY_BTNS[txt]; save()
             send(cid, f"⏱️ Expiry set: {state['expiry']} Min\nAll new signals will be {state['expiry']}-minute trades.",
                  keyboard=True)
+        elif low.startswith(("/addadmin", "/removeadmin", "/admins")):
+            if not is_owner(cid):
+                send(cid, "⛔ Only the owner can manage admins.", keyboard=True); return
+            parts = txt.split()
+            if low.startswith("/admins"):
+                lst = "\n".join(f"• {a}" for a in state["admins"]) or "(none)"
+                send(cid, f"👑 Owner: {config.OWNER_ID}\n🛡️ Admins:\n{lst}", keyboard=True); return
+            if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
+                send(cid, "Usage: /addadmin 123456789   or   /removeadmin 123456789\n"
+                          "(the person gets their ID by sending /id to this bot)", keyboard=True); return
+            aid = int(parts[1])
+            if low.startswith("/addadmin"):
+                if aid not in state["admins"]:
+                    state["admins"].append(aid); save()
+                send(cid, f"✅ {aid} is now an admin.", keyboard=True)
+                send(aid, "🛡️ You are now an admin of this bot. You can change market, expiry and stickers.",
+                     keyboard=True)
+            else:
+                if aid in state["admins"]:
+                    state["admins"].remove(aid); save()
+                send(cid, f"🗑️ {aid} is no longer an admin.", keyboard=True)
         elif low.startswith("/id"):
-            send(cid, f"Your chat ID: {cid}\nTo make yourself the only admin, put ADMIN_CHAT_ID={cid} in .env",
-                 keyboard=True)
+            role = "👑 Owner" if is_owner(cid) else ("🛡️ Admin" if is_admin(cid) and config.OWNER_ID else "Member")
+            send(cid, f"Your chat ID: {cid}\nRole: {role}", keyboard=True)
         elif txt == BTN_STATUS or low.startswith("/status"):
             send(cid, status_text(), keyboard=True)
         elif txt == BTN_LIVE or low.startswith("/live"):

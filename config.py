@@ -36,6 +36,8 @@ QUOTEX_HOST = os.getenv("QUOTEX_HOST", "").strip().replace("https://", "").repla
 
 # Optional: only this Telegram chat may enter the Quotex OTP (your own chat id)
 ADMIN_CHAT_ID = _int_env("ADMIN_CHAT_ID", 0)
+# OWNER_ID: full power (settings + add/remove admins). Falls back to ADMIN_CHAT_ID.
+OWNER_ID = _int_env("OWNER_ID", 0) or ADMIN_CHAT_ID
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
