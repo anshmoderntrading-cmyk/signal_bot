@@ -484,7 +484,7 @@ def scanner_loop():
     """One trade at a time: signal -> trade window -> result (+ chart) -> gap -> next signal."""
     next_start_min = 0  # earliest allowed start (epoch seconds) for the next trade
     while True:
-        if not state["subscribers"] or not market_open():
+        if not state["subscribers"] or not market_open() or (QX is not None and not QX.connected):
             wait_next_minute()
             continue
         now_ms = int(time.time() * 1000)

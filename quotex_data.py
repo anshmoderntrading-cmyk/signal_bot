@@ -73,13 +73,13 @@ class QuotexFeed:
             self.client = Quotex(email=self.email, password=self.password, lang="en",
                                  host=self.host, on_otp_callback=self.otp_callback)
             print(f"Quotex host: {getattr(self.client, 'host', '?')}")
-        for attempt in range(5):
+        for attempt in range(2):
             ok, reason = await self.client.connect()
             if ok:
                 print("Quotex connected")
                 self.connected = True
                 return True
-            print(f"Quotex login failed ({reason}), retry {attempt + 1}/5")
+            print(f"Quotex login failed ({reason}), retry {attempt + 1}/2")
             await asyncio.sleep(5 * (attempt + 1))
         raise RuntimeError("Quotex login failed. Check email/password or OTP.")
 
@@ -114,12 +114,15 @@ class QuotexFeed:
     def connect_forever(self):
         """Keep trying to log in in the background (bot keeps running meanwhile)."""
         def worker():
+            wait = 120
             while not self.connected:
                 try:
                     self.connect()
                 except Exception as e:
                     print("Quotex connect error:", e)
-                    time.sleep(60)
+                    print(f"Next login try in {wait // 60} min (frequent retries keep the block longer)")
+                    time.sleep(wait)
+                    wait = min(wait * 2, 900)  # 2, 4, 8, 15 min
         threading.Thread(target=worker, daemon=True).start()
 
     def get_klines(self, asset, interval="1m", limit=300):
