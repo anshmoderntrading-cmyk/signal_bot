@@ -32,6 +32,15 @@ FIAT = {
 }
 
 
+METALS = {"XAU", "XAG", "XPT", "XPD"}
+
+
+def is_crypto_like(name):
+    """6-letter XXXUSD style asset that is not forex and not a metal (ETCUSD, DASUSD, BTCUSD...)."""
+    s = str(name).replace("_otc", "")
+    return len(s) == 6 and s.isalpha() and s[:3] not in METALS and not is_forex(name)
+
+
 def is_forex(name):
     s = str(name).replace("_otc", "")
     return len(s) == 6 and s[:3] in FIAT and s[3:] in FIAT
@@ -172,7 +181,7 @@ class QuotexFeed:
             print("payout error", asset, e)
             return None
 
-    async def _tradable(self, otc, min_payout):
+    async def _tradable(self, otc, min_payout, crypto=False):
         import re
         async with self.lock:
             inst = await self.client.get_instruments() or []
@@ -182,8 +191,10 @@ class QuotexFeed:
                     name, is_open = i[1], bool(i[14])
                 except Exception:
                     continue
-                if not re.fullmatch(r"[A-Z]{6}(_otc)?", str(name)) or not is_forex(name):
-                    continue  # real currency pairs only (no crypto / metals / stocks)
+                if not re.fullmatch(r"[A-Z]{6}(_otc)?", str(name)):
+                    continue
+                if not (is_forex(name) or (crypto and is_crypto_like(name))):
+                    continue  # currency pairs (+ crypto if enabled); never metals / stocks
                 if name.endswith("_otc") != otc or not is_open:
                     continue
                 p = self.client.get_payout_by_asset(name, "1")
@@ -199,10 +210,10 @@ class QuotexFeed:
             out.sort(key=lambda x: -x[1])
             return out
 
-    def tradable_pairs(self, otc=True, min_payout=85, limit=15):
-        """All open currency pairs with payout >= min_payout, best payout first."""
+    def tradable_pairs(self, otc=True, min_payout=85, limit=15, crypto=False):
+        """All open currency pairs (+ crypto if enabled) with payout >= min_payout, best payout first."""
         try:
-            return self._run(self._tradable(otc, min_payout), timeout=60)[:limit]
+            return self._run(self._tradable(otc, min_payout, crypto), timeout=60)[:limit]
         except Exception as e:
             print("pair list error:", e)
             return []

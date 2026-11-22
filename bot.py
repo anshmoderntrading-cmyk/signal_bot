@@ -94,10 +94,12 @@ IST = timezone(timedelta(hours=5, minutes=30))
 BTN_ON, BTN_STOP = "🟢 Signal ON", "🔴 Signal STOP"
 BTN_LIVE, BTN_OTC = "📈 LIVE Market", "🌙 OTC Market"
 BTN_STATUS = "⚙️ Status"
+BTN_FX_ONLY, BTN_CRYPTO = "💱 Only Currency", "🪙 Currency + Crypto"
 EXPIRY_BTNS = {f"{m} Min": m for m in range(1, 6)}
 KEYBOARD = {"keyboard": [[{"text": BTN_ON}, {"text": BTN_STOP}],
                          [{"text": BTN_LIVE}, {"text": BTN_OTC}],
                          [{"text": t} for t in EXPIRY_BTNS],
+                         [{"text": BTN_FX_ONLY}, {"text": BTN_CRYPTO}],
                          [{"text": BTN_STATUS}]], "resize_keyboard": True}
 lock = threading.Lock()
 
@@ -122,7 +124,8 @@ state = load()
 state.setdefault("stickers", {"win": [], "loss": []})
 state.setdefault("mode", "otc")
 state.setdefault("admins", [])
-state.setdefault("blocked_pairs", [])  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
+state.setdefault("blocked_pairs", [])
+state.setdefault("crypto", False)  # include OTC crypto (ETCUSD, DASUSD...) in the pair list  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []
@@ -201,6 +204,7 @@ def status_text():
     return (f"⚙️ Settings\n"
             f"Quotex: {conn}\nLast scan: {last_scan['text']}\n"
             f"Signals: {on}\nMarket: {mode}\nExpiry: {exp}\n"
+            f"Pairs: {'currency + crypto' if state.get('crypto') else 'currency only'}\n"
             f"Strategy: {config.STRATEGY}{rules}\nMin payout: {config.MIN_PAYOUT}%\n"
             f"Gap after trade: {config.GAP_MINUTES} min\n"
             f"Record: {w} W / {l} L ({acc})")
@@ -300,6 +304,13 @@ def handle(msg):
         elif low.startswith("/id"):
             role = "👑 Owner" if is_owner(cid) else ("🛡️ Admin" if is_admin(cid) and config.OWNER_ID else "Member")
             send(cid, f"Your chat ID: {cid}\nRole: {role}", keyboard=True)
+        elif txt in (BTN_FX_ONLY, BTN_CRYPTO):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            state["crypto"] = txt == BTN_CRYPTO; save()
+            _pairs_cache["t"] = 0  # rebuild the pair list on the next scan
+            send(cid, "🪙 Crypto ON: currency + crypto pairs (ETC, DASH, ZEC...)" if state["crypto"]
+                 else "💱 Only currency pairs (no crypto)", keyboard=True)
         elif txt == BTN_STATUS or low.startswith("/status"):
             send(cid, status_text(), keyboard=True)
         elif txt == BTN_LIVE or low.startswith("/live"):
@@ -350,7 +361,8 @@ def current_symbols():
     if not config.AUTO_PAIRS or not QX.connected:
         return fixed
     if time.time() - _pairs_cache["t"] > 300 or _pairs_cache["mode"] != state.get("mode"):
-        found = QX.tradable_pairs(otc=not live, min_payout=config.MIN_PAYOUT)
+        found = QX.tradable_pairs(otc=not live, min_payout=config.MIN_PAYOUT,
+                                  crypto=bool(state.get("crypto")))
         if found:
             print("pairs with payout >= %d%%:" % config.MIN_PAYOUT,
                   ", ".join(f"{n.replace('_otc', '')} {int(p)}%" for n, p in found))
