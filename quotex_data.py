@@ -22,6 +22,9 @@ def _patch_curl_cffi():
         pass
 
 
+NOT_FOREX = {"BTC", "ETH", "LTC", "XRP", "BCH", "BNB", "SOL", "ADA", "DOG", "TRX", "DOT", "AVA", "MAT",
+             "LIN", "TON", "SHI", "XAU", "XAG", "XPT", "XPD", "UKB", "USC", "BRE", "WTI"}
+
 COLS = ["open_time", "open", "high", "low", "close", "volume", "close_time"]
 
 
@@ -157,6 +160,41 @@ class QuotexFeed:
         except Exception as e:
             print("payout error", asset, e)
             return None
+
+    async def _tradable(self, otc, min_payout):
+        import re
+        async with self.lock:
+            inst = await self.client.get_instruments() or []
+            out = []
+            for i in inst:
+                try:
+                    name, is_open = i[1], bool(i[14])
+                except Exception:
+                    continue
+                if not re.fullmatch(r"[A-Z]{6}(_otc)?", str(name)) or str(name)[:3] in NOT_FOREX:
+                    continue  # currency pairs only (no stocks / crypto / metals)
+                if name.endswith("_otc") != otc or not is_open:
+                    continue
+                p = self.client.get_payout_by_asset(name, "1")
+                if p in (None, "", 0):
+                    p = i[5]
+                try:
+                    p = float(p)
+                except (TypeError, ValueError):
+                    continue
+                p = p * 100 if 0 < p <= 1 else p
+                if p >= min_payout:
+                    out.append((name, p))
+            out.sort(key=lambda x: -x[1])
+            return out
+
+    def tradable_pairs(self, otc=True, min_payout=85, limit=15):
+        """All open currency pairs with payout >= min_payout, best payout first."""
+        try:
+            return self._run(self._tradable(otc, min_payout), timeout=60)[:limit]
+        except Exception as e:
+            print("pair list error:", e)
+            return []
 
     def is_open(self, asset):
         try:

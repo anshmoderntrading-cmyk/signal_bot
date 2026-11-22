@@ -124,7 +124,8 @@ state.setdefault("mode", "otc")
 state.setdefault("admins", [])  # chat ids added by the owner
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
-recent_pairs = []  # last few signalled pairs, so every signal comes from a different market
+recent_pairs = []
+last_scan = {"text": "no scan yet"}  # last few signalled pairs, so every signal comes from a different market
 
 
 # ---------------- telegram ----------------
@@ -187,9 +188,19 @@ def status_text():
     mode = ("🌙 OTC" if state.get("mode") != "live" else "📈 LIVE") if QX is not None else "📈 LIVE"
     exp = f"{state['expiry']} Min" if state.get("expiry") else "auto (from strategy)"
     on = "🟢 ON" if state["subscribers"] else "🔴 OFF"
+    if QX is not None:
+        conn = "🟢 connected" if QX.connected else "🔴 NOT connected (login blocked/retrying)"
+    else:
+        conn = "real forex feed"
+    rules = ""
+    if config.STRATEGY == "auto":
+        data = load_rules()
+        n = len(data.get("rules", [])) if data else 0
+        rules = f" ({n} rule{'s' if n != 1 else ''} loaded)" + ("  ⚠️ no rules -> no signals!" if n == 0 else "")
     return (f"⚙️ Settings\n"
+            f"Quotex: {conn}\nLast scan: {last_scan['text']}\n"
             f"Signals: {on}\nMarket: {mode}\nExpiry: {exp}\n"
-            f"Strategy: {config.STRATEGY}\nMin payout: {config.MIN_PAYOUT}%\n"
+            f"Strategy: {config.STRATEGY}{rules}\nMin payout: {config.MIN_PAYOUT}%\n"
             f"Gap after trade: {config.GAP_MINUTES} min\n"
             f"Record: {w} W / {l} L ({acc})")
 
@@ -299,12 +310,26 @@ def poll_updates():
 
 
 # ---------------- signals ----------------
+_pairs_cache = {"t": 0, "mode": None, "list": []}
+
+
 def current_symbols():
-    """Pairs to scan: Quotex OTC (EURUSD_otc) or Quotex live (EURUSD); real forex feed otherwise."""
+    """Pairs to scan. Quotex + AUTO_PAIRS: every open currency pair with payout >= MIN_PAYOUT
+    (refreshed every 5 min); otherwise the fixed SYMBOLS list."""
     if QX is None:
         return config.SYMBOLS
+    live = state.get("mode") == "live"
     base = [s.replace("_otc", "") for s in config.SYMBOLS]
-    return base if state.get("mode") == "live" else [s + "_otc" for s in base]
+    fixed = base if live else [s + "_otc" for s in base]
+    if not config.AUTO_PAIRS or not QX.connected:
+        return fixed
+    if time.time() - _pairs_cache["t"] > 300 or _pairs_cache["mode"] != state.get("mode"):
+        found = QX.tradable_pairs(otc=not live, min_payout=config.MIN_PAYOUT)
+        if found:
+            print("pairs with payout >= %d%%:" % config.MIN_PAYOUT,
+                  ", ".join(f"{n.replace('_otc', '')} {int(p)}%" for n, p in found))
+        _pairs_cache.update(t=time.time(), mode=state.get("mode"), list=[n for n, _ in found])
+    return _pairs_cache["list"] or fixed
 
 
 def market_open(now=None):
@@ -400,6 +425,15 @@ def best_signal(now_ms):
         elif QX is not None and data.get("mode") != state.get("mode"):
             pick += f"  (note: rules were researched for {data.get('mode')}, mode is {state.get('mode')})"
     print(time.strftime("%H:%M"), "scan:", stats, pick)
+    why = []
+    if stats["error"]: why.append(f"{stats['error']} data errors")
+    if stats["low_payout"]: why.append(f"{stats['low_payout']} payout<{config.MIN_PAYOUT}%")
+    if stats["no_setup"]: why.append(f"{stats['no_setup']} no setup")
+    if stats["closed"]: why.append(f"{stats['closed']} closed")
+    if stats["stale"]: why.append(f"{stats['stale']} no fresh data")
+    if stats["weak_pair"]: why.append(f"{stats['weak_pair']} weak pair")
+    last_scan["text"] = (f"{time.strftime('%H:%M')} -> " + (f"{best[1]} {best[2]['direction']}" if best else
+                         "no signal (" + (", ".join(why) or "nothing") + ")"))
     if payouts:
         print("   payout %:", payouts)
     return best
