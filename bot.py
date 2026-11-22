@@ -121,7 +121,8 @@ def save():
 state = load()
 state.setdefault("stickers", {"win": [], "loss": []})
 state.setdefault("mode", "otc")
-state.setdefault("admins", [])  # chat ids added by the owner
+state.setdefault("admins", [])
+state.setdefault("blocked_pairs", [])  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []
@@ -272,6 +273,30 @@ def handle(msg):
                 if aid in state["admins"]:
                     state["admins"].remove(aid); save()
                 send(cid, f"🗑️ {aid} is no longer an admin.", keyboard=True)
+        elif low.startswith("/pairs"):
+            syms = [s.replace("_otc", "") for s in current_symbols()]
+            names = ", ".join(f"{s[:3]}/{s[3:]}" for s in syms) or "(none right now)"
+            bl = ", ".join(state["blocked_pairs"]) or "(none)"
+            send(cid, f"📋 Pairs being scanned now (payout >= {config.MIN_PAYOUT}%):\n{names}\n\n"
+                      f"🚫 Blocked: {bl}\n\nRemove a pair: /block USDBDT\nAllow again: /unblock USDBDT",
+                 keyboard=True)
+        elif low.startswith(("/block", "/unblock")):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            parts = txt.upper().split()[1:]
+            pairs = [p.replace("/", "").replace("_OTC", "").replace("(OTC)", "").replace("OTC", "")
+                     for p in parts]
+            pairs = [p for p in pairs if len(p) == 6 and p.isalpha()]
+            if not pairs:
+                send(cid, "Usage: /block USDBDT   (several: /block USDBDT USDPKR)", keyboard=True); return
+            for p in pairs:
+                if low.startswith("/block") and p not in state["blocked_pairs"]:
+                    state["blocked_pairs"].append(p)
+                elif low.startswith("/unblock") and p in state["blocked_pairs"]:
+                    state["blocked_pairs"].remove(p)
+            save()
+            send(cid, f"{'🚫 Blocked' if low.startswith('/block') else '✅ Allowed'}: {', '.join(pairs)}\n"
+                      f"Blocked list: {', '.join(state['blocked_pairs']) or '(none)'}", keyboard=True)
         elif low.startswith("/id"):
             role = "👑 Owner" if is_owner(cid) else ("🛡️ Admin" if is_admin(cid) and config.OWNER_ID else "Member")
             send(cid, f"Your chat ID: {cid}\nRole: {role}", keyboard=True)
@@ -317,7 +342,8 @@ def current_symbols():
     """Pairs to scan. Quotex + AUTO_PAIRS: every open currency pair with payout >= MIN_PAYOUT
     (refreshed every 5 min); otherwise the fixed SYMBOLS list."""
     if QX is None:
-        return config.SYMBOLS
+        blocked = set(state.get("blocked_pairs", []))
+        return [s for s in config.SYMBOLS if s not in blocked]
     live = state.get("mode") == "live"
     base = [s.replace("_otc", "") for s in config.SYMBOLS]
     fixed = base if live else [s + "_otc" for s in base]
@@ -329,7 +355,9 @@ def current_symbols():
             print("pairs with payout >= %d%%:" % config.MIN_PAYOUT,
                   ", ".join(f"{n.replace('_otc', '')} {int(p)}%" for n, p in found))
         _pairs_cache.update(t=time.time(), mode=state.get("mode"), list=[n for n, _ in found])
-    return _pairs_cache["list"] or fixed
+    lst = _pairs_cache["list"] or fixed
+    blocked = set(state.get("blocked_pairs", []))
+    return [s for s in lst if s.replace("_otc", "") not in blocked]
 
 
 def market_open(now=None):
