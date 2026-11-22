@@ -93,8 +93,12 @@ API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 IST = timezone(timedelta(hours=5, minutes=30))
 BTN_ON, BTN_STOP = "🟢 Signal ON", "🔴 Signal STOP"
 BTN_LIVE, BTN_OTC = "📈 LIVE Market", "🌙 OTC Market"
+BTN_STATUS = "⚙️ Status"
+EXPIRY_BTNS = {f"{m} Min": m for m in range(1, 6)}
 KEYBOARD = {"keyboard": [[{"text": BTN_ON}, {"text": BTN_STOP}],
-                         [{"text": BTN_LIVE}, {"text": BTN_OTC}]], "resize_keyboard": True}
+                         [{"text": BTN_LIVE}, {"text": BTN_OTC}],
+                         [{"text": t} for t in EXPIRY_BTNS],
+                         [{"text": BTN_STATUS}]], "resize_keyboard": True}
 lock = threading.Lock()
 
 
@@ -156,6 +160,33 @@ def send_sticker(chat_id, file_id):
         print("sticker error:", e)
 
 
+def is_admin(cid):
+    """ADMIN_CHAT_ID set -> only that chat may change settings; not set -> everyone (single-user bot)."""
+    return not config.ADMIN_CHAT_ID or cid == config.ADMIN_CHAT_ID
+
+
+def current_expiry(sig=None):
+    """Admin-chosen expiry (buttons) wins; otherwise the rule's own expiry; otherwise .env."""
+    if state.get("expiry"):
+        return int(state["expiry"])
+    if sig and sig.get("expiry"):
+        return int(sig["expiry"])
+    return config.EXPIRY_MINUTES
+
+
+def status_text():
+    w, l = state.get("win", 0), state.get("loss", 0)
+    acc = f"{100 * w / (w + l):.1f}%" if w + l else "-"
+    mode = ("🌙 OTC" if state.get("mode") != "live" else "📈 LIVE") if QX is not None else "📈 LIVE"
+    exp = f"{state['expiry']} Min" if state.get("expiry") else "auto (from strategy)"
+    on = "🟢 ON" if state["subscribers"] else "🔴 OFF"
+    return (f"⚙️ Settings\n"
+            f"Signals: {on}\nMarket: {mode}\nExpiry: {exp}\n"
+            f"Strategy: {config.STRATEGY}\nMin payout: {config.MIN_PAYOUT}%\n"
+            f"Gap after trade: {config.GAP_MINUTES} min\n"
+            f"Record: {w} W / {l} L ({acc})")
+
+
 def handle(msg):
     cid = msg["chat"]["id"]
     txt = (msg.get("text") or "").strip()
@@ -192,11 +223,26 @@ def handle(msg):
             note = "" if market_open() else "\n⚠️ The live market is closed right now (weekend). Press 🌙 OTC Market, or wait for Monday."
             note = f"\nMode: {mode}" + note
             send(cid, f"✅ Signal ON\nOne trade at a time: result + chart, then the next signal after {config.GAP_MINUTES} min.{note}", keyboard=True)
+        elif txt in EXPIRY_BTNS:
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            state["expiry"] = EXPIRY_BTNS[txt]; save()
+            send(cid, f"⏱️ Expiry set: {state['expiry']} Min\nAll new signals will be {state['expiry']}-minute trades.",
+                 keyboard=True)
+        elif low.startswith("/id"):
+            send(cid, f"Your chat ID: {cid}\nTo make yourself the only admin, put ADMIN_CHAT_ID={cid} in .env",
+                 keyboard=True)
+        elif txt == BTN_STATUS or low.startswith("/status"):
+            send(cid, status_text(), keyboard=True)
         elif txt == BTN_LIVE or low.startswith("/live"):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
             state["mode"] = "live"; save()
             note = "" if forex_week_open() else "\n⚠️ The live market is closed now (weekend). Signals start Monday ~3:30 AM IST, or press 🌙 OTC Market."
             send(cid, f"📈 LIVE Market selected\nReal market pairs (Mon-Fri).{note}", keyboard=True)
         elif txt == BTN_OTC or low.startswith("/otc"):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
             state["mode"] = "otc"; save()
             send(cid, "🌙 OTC Market selected\nOTC pairs (every day, 24/7).", keyboard=True)
         elif txt == BTN_STOP or txt.lower().startswith(("/stop", "/off")):
@@ -424,7 +470,8 @@ def scanner_loop():
             start_s += 60
         start_s = max(start_s, next_start_min)
         start = datetime.fromtimestamp(start_s, timezone.utc)
-        expiry = sig.get("expiry", config.EXPIRY_MINUTES)
+        expiry = current_expiry(sig)
+        sig["expiry"] = expiry
         end = start + timedelta(minutes=expiry)
         text = fmt_signal(sym, sig["direction"], start, end, expiry)
         msg_ids = {}
