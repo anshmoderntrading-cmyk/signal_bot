@@ -7,3 +7,4 @@ settings/
 browser/
 .venv/
 best_rules.json
+results.csv

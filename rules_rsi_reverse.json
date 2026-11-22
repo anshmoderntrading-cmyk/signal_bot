@@ -1,0 +1,9 @@
+{
+ "generated": "manual - chosen from research.py TOP rules (test 64%, train 51%)",
+ "mode": "otc",
+ "candles": 3000,
+ "rules": [
+  {"rule": "rsi14_25_75_reverse", "expiry": 3, "pairs": "ALL",
+   "train_acc": 51.4, "test_acc": 64.0, "test_trades": 222, "z": 2.4}
+ ]
+}

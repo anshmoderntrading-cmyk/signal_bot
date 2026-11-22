@@ -327,6 +327,24 @@ def best_signal(now_ms):
     return best
 
 
+RESULTS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.csv")
+
+
+def log_result(sym, sig, start_ms, expiry, entry, exit_price, res):
+    """Every trade is appended to results.csv -> honest record (python stats.py)."""
+    new = not os.path.exists(RESULTS_CSV)
+    try:
+        with open(RESULTS_CSV, "a") as f:
+            if new:
+                f.write("time_ist,pair,direction,expiry_min,strategy,rule,entry,exit,result\n")
+            t = datetime.fromtimestamp(start_ms / 1000, timezone.utc).astimezone(IST)
+            rule = (sig.get("reasons") or [""])[0] if config.STRATEGY == "auto" else ""
+            f.write(f"{t:%Y-%m-%d %H:%M},{sym},{sig['direction']},{expiry},{config.STRATEGY},"
+                    f"{rule},{entry},{exit_price},{res}\n")
+    except Exception as e:
+        print("results.csv error:", e)
+
+
 def check_result(sym, sig, start_ms, msg_ids):
     """Trade window [start, start+expiry]: entry = price at start, exit = price at end."""
     entry_close = start_ms - 1                       # candle that closes exactly at start
@@ -355,6 +373,7 @@ def check_result(sym, sig, start_ms, msg_ids):
     else:
         res = "loss"
     print(time.strftime("%H:%M"), "result", sym, sig["direction"], entry, "->", exit_price, res.upper())
+    log_result(sym, sig, start_ms, expiry, entry, exit_price, res)
     with lock:
         state[res] += 1
         if res != "draw":
