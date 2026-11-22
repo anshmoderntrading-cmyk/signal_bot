@@ -62,3 +62,11 @@ Limits of the free plan: a restart/redeploy resets stats.json (Live Stats); the 
 5. On first login Quotex may send a code to your email: type it into the black window.
 6. Press 🟢 Signal ON on Telegram → "EUR/USD OTC LIVE 🟢 BUY" signals every 2 minutes.
 The bot runs only while the laptop is on and the window is open.
+
+## Find a strategy from real data (research)
+    python research.py          # OTC pairs (stop the bot first: both use the same Quotex login)
+    python research.py live     # live pairs, Mon-Fri
+Tests many rules x expiries on ~2 days of candles, with a train/test split and a luck (significance) check.
+Rules that pass are saved to best_rules.json. To use them:
+    sed -i 's/^STRATEGY=.*//' .env; echo 'STRATEGY=auto' >> .env
+If NOTHING passes, the data shows no reliable edge - the honest answer is: don't trade it with real money.

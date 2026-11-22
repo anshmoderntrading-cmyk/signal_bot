@@ -18,6 +18,42 @@ import requests
 import config
 from data import get_klines, closed_candles, is_fresh
 from strategy import analyze, analyze_v2
+from rules import signal_now
+
+RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "best_rules.json")
+_rules_cache = {"mtime": None, "data": None}
+
+
+def load_rules():
+    """Rules found by research.py (reloaded automatically when the file changes)."""
+    try:
+        mt = os.path.getmtime(RULES_FILE)
+    except OSError:
+        return None
+    if mt != _rules_cache["mtime"]:
+        try:
+            with open(RULES_FILE) as f:
+                _rules_cache["data"] = json.load(f)
+            _rules_cache["mtime"] = mt
+        except Exception as e:
+            print("best_rules.json error:", e)
+            return None
+    return _rules_cache["data"]
+
+
+def analyze_auto(sym, df):
+    data = load_rules()
+    if not data:
+        return None
+    for r in data.get("rules", []):
+        if r["pairs"] != "ALL" and sym not in r["pairs"]:
+            continue
+        d = signal_now(df, r["rule"])
+        if d:
+            return {"direction": "CALL" if d > 0 else "PUT", "score": r["test_acc"], "max": 100,
+                    "reasons": [r["rule"]], "price": float(df["close"].iloc[-1]), "edge": 0,
+                    "expiry": int(r["expiry"])}
+    return None
 from chart import trade_chart
 
 QX = None
@@ -218,11 +254,12 @@ def pair_name(sym):
     return f"{base[:3]}/{base[3:]}{tag}"
 
 
-def fmt_signal(sym, direction, start, end):
+def fmt_signal(sym, direction, start, end, expiry=None):
+    expiry = expiry or config.EXPIRY_MINUTES
     side = "🟢 BUY" if direction == "CALL" else "🔴 SELL"
     t = lambda d: d.astimezone(IST).strftime("%I:%M %p")
     return (f"{pair_name(sym)} {side}\n"
-            f"⏱️ {config.EXPIRY_MINUTES} Min\n"
+            f"⏱️ {expiry} Min\n"
             f"🕒 {t(start)} – {t(end)}")
 
 
@@ -260,7 +297,9 @@ def best_signal(now_ms):
                 stats["weak_pair"] += 1
                 continue
             force = not config.QUALITY_ONLY
-            if config.STRATEGY == "v2":
+            if config.STRATEGY == "auto":
+                sig = analyze_auto(sym, df)
+            elif config.STRATEGY == "v2":
                 sig = analyze_v2(df, config.MIN_SCORE_V2, force=force)
             else:
                 sig = analyze(df, config.MIN_SCORE, force=force)
@@ -276,6 +315,12 @@ def best_signal(now_ms):
             stats["error"] += 1
             print("scan error", sym, e)
     pick = f" -> {best[1]} {best[2]['direction']}" if best else " -> no signal"
+    if config.STRATEGY == "auto":
+        data = load_rules()
+        if not data or not data.get("rules"):
+            pick += "  (STRATEGY=auto but best_rules.json has no rules: run python research.py)"
+        elif QX is not None and data.get("mode") != state.get("mode"):
+            pick += f"  (note: rules were researched for {data.get('mode')}, mode is {state.get('mode')})"
     print(time.strftime("%H:%M"), "scan:", stats, pick)
     if payouts:
         print("   payout %:", payouts)
@@ -285,7 +330,8 @@ def best_signal(now_ms):
 def check_result(sym, sig, start_ms, msg_ids):
     """Trade window [start, start+expiry]: entry = price at start, exit = price at end."""
     entry_close = start_ms - 1                       # candle that closes exactly at start
-    exit_close = entry_close + config.EXPIRY_MINUTES * 60_000
+    expiry = sig.get("expiry", config.EXPIRY_MINUTES)
+    exit_close = entry_close + expiry * 60_000
     time.sleep(max(0, (exit_close - time.time() * 1000) / 1000) + 3)
     entry = exit_price = None
     df = None
@@ -321,7 +367,7 @@ def check_result(sym, sig, start_ms, msg_ids):
         png = None
         try:
             png = trade_chart(pair_name(sym), sig["direction"], df, start_ms, entry, exit_price, res,
-                              config.EXPIRY_MINUTES)
+                              expiry)
         except Exception as e:
             print("chart error:", e)
         stickers = list(state.get("stickers", {}).get("win" if res == "win" else "loss", []))
@@ -359,15 +405,16 @@ def scanner_loop():
             start_s += 60
         start_s = max(start_s, next_start_min)
         start = datetime.fromtimestamp(start_s, timezone.utc)
-        end = start + timedelta(minutes=config.EXPIRY_MINUTES)
-        text = fmt_signal(sym, sig["direction"], start, end)
+        expiry = sig.get("expiry", config.EXPIRY_MINUTES)
+        end = start + timedelta(minutes=expiry)
+        text = fmt_signal(sym, sig["direction"], start, end, expiry)
         msg_ids = {}
         for cid in list(state["subscribers"]):
             mid = send(cid, text)
             if mid:
                 msg_ids[cid] = mid
         check_result(sym, sig, start_s * 1000, msg_ids)  # waits until the trade is finished
-        end_s = start_s + config.EXPIRY_MINUTES * 60
+        end_s = start_s + expiry * 60
         next_start_min = end_s + config.GAP_MINUTES * 60
         # next signal is sent right away; its trade starts after the gap
 

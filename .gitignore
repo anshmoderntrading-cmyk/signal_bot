@@ -6,3 +6,4 @@ session.json
 settings/
 browser/
 .venv/
+best_rules.json
