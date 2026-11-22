@@ -22,8 +22,19 @@ def _patch_curl_cffi():
         pass
 
 
-NOT_FOREX = {"BTC", "ETH", "LTC", "XRP", "BCH", "BNB", "SOL", "ADA", "DOG", "TRX", "DOT", "AVA", "MAT",
-             "LIN", "TON", "SHI", "XAU", "XAG", "XPT", "XPD", "UKB", "USC", "BRE", "WTI"}
+# real (fiat) currency codes - a pair is forex only if BOTH halves are in this list
+FIAT = {
+    "USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF", "CNY", "CNH", "HKD", "SGD", "INR", "BRL",
+    "BDT", "PKR", "EGP", "NGN", "DZD", "ARS", "COP", "MXN", "IDR", "PHP", "TRY", "ZAR", "RUB", "THB",
+    "MYR", "KRW", "SEK", "NOK", "DKK", "PLN", "HUF", "CZK", "ILS", "SAR", "AED", "QAR", "KWD", "MAD",
+    "TND", "KES", "UAH", "VND", "CLP", "PEN", "LKR", "NPR", "IQD", "JOD", "BHD", "OMR", "RON", "BGN",
+    "ISK", "TWD", "KZT", "GHS", "UGX", "TZS", "XOF", "XAF",
+}
+
+
+def is_forex(name):
+    s = str(name).replace("_otc", "")
+    return len(s) == 6 and s[:3] in FIAT and s[3:] in FIAT
 
 COLS = ["open_time", "open", "high", "low", "close", "volume", "close_time"]
 
@@ -171,8 +182,8 @@ class QuotexFeed:
                     name, is_open = i[1], bool(i[14])
                 except Exception:
                     continue
-                if not re.fullmatch(r"[A-Z]{6}(_otc)?", str(name)) or str(name)[:3] in NOT_FOREX:
-                    continue  # currency pairs only (no stocks / crypto / metals)
+                if not re.fullmatch(r"[A-Z]{6}(_otc)?", str(name)) or not is_forex(name):
+                    continue  # real currency pairs only (no crypto / metals / stocks)
                 if name.endswith("_otc") != otc or not is_open:
                     continue
                 p = self.client.get_payout_by_asset(name, "1")
