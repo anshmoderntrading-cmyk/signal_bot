@@ -721,6 +721,9 @@ def check_result(sym, sig, start_ms, msg_ids):
             print("result error:", ex)
         time.sleep(5)
     if exit_price is None:
+        print(time.strftime("%H:%M"), "result NOT available for", sym)
+        for cid, mid in msg_ids.items():
+            send(cid, "⚠️ Result not available (Quotex sent no price data for this candle)", reply_to=mid)
         return None
     if exit_price == entry:
         res = "draw"

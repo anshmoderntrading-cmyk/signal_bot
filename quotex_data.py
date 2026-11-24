@@ -158,14 +158,15 @@ class QuotexFeed:
     def get_klines(self, asset, interval="1m", limit=300):
         if not self.connected:
             raise RuntimeError("Quotex not connected yet")
-        if self.bad.get(asset, 0) > time.time():
+        if limit >= 60 and self.bad.get(asset, 0) > time.time():  # never skip result checks
             raise RuntimeError("skipped for a few minutes (Quotex sent no data)")
         try:
             df = self._run(self._candles(asset, limit), timeout=60).iloc[-limit:]
         except Exception:
-            self.bad[asset] = time.time() + 600
+            if limit >= 60:
+                self.bad[asset] = time.time() + 600
             raise
-        if limit > 30 and len(df) < 60:
+        if limit >= 60 and len(df) < 60:
             self.bad[asset] = time.time() + 600   # no usable history -> don't waste time on it for 10 min
         return df
 
