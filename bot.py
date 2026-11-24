@@ -237,7 +237,25 @@ def status_text():
             f"Record: {w} W / {l} L ({acc})")
 
 
+def handle_group(msg):
+    """Groups: only the owner/admins' Session Starts / Session Closed stickers do anything (no spam replies)."""
+    gid = msg["chat"]["id"]
+    sender = (msg.get("from") or {}).get("id", 0)
+    st = msg.get("sticker")
+    if not st or not is_admin(sender):
+        return
+    uid = st.get("file_unique_id")
+    ss = state["session_stickers"]
+    if ss.get("start") and uid == ss["start"]["unique_id"]:
+        start_session(gid)
+    elif ss.get("close") and uid == ss["close"]["unique_id"]:
+        stop_session([gid])
+
+
 def handle(msg):
+    if msg.get("chat", {}).get("type") in ("group", "supergroup"):
+        handle_group(msg)
+        return
     cid = msg["chat"]["id"]
     txt = (msg.get("text") or "").strip()
     allowed = (cid == config.ADMIN_CHAT_ID) if config.ADMIN_CHAT_ID else (cid in state["subscribers"])
