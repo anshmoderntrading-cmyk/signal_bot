@@ -245,6 +245,13 @@ def handle(msg):
         OTP["code"] = txt
         send(cid, "✅ Code received, logging in to Quotex...")
         return
+    fwd = msg.get("forward_from_chat") or (msg.get("forward_origin") or {}).get("chat")
+    if fwd and fwd.get("type") in ("channel", "supergroup", "group"):  # forwarded channel post -> show its ID
+        if is_admin(cid):
+            send(cid, f"📢 Channel: {fwd.get('title', '')}\nID: {fwd['id']}\n\n"
+                      f"Start signals there:\n/channel_on {fwd['id']}\n\nStop:\n/channel_off {fwd['id']}\n\n"
+                      "(the bot must be an admin of this channel with 'Post Messages')", keyboard=True)
+        return
     if "sticker" in msg:  # user sends a sticker -> ask whether it is for WIN or LOSS
         if not is_admin(cid):
             return
@@ -346,7 +353,8 @@ def handle(msg):
                 send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
             parts = txt.split()
             if len(parts) < 2:
-                send(cid, "Usage: /channel_on @yourchannel   or   /channel_off @yourchannel\n"
+                send(cid, "Usage: /channel_on @yourchannel  or  /channel_on -100123456789\n"
+                          "Private channel? Forward any post from it to me and I'll show its ID.\n"
                           "(the bot must be an admin of the channel with 'Post Messages')", keyboard=True)
                 return
             try:
