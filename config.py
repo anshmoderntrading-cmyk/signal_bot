@@ -63,6 +63,8 @@ MIN_PAYOUT = _int_env("MIN_PAYOUT", 85)  # Quotex: skip pairs whose payout % is 
 # Quotex: scan every open currency pair with payout >= MIN_PAYOUT (not only SYMBOLS). 0 = use SYMBOLS only
 AUTO_PAIRS = os.getenv("AUTO_PAIRS", "1") != "0"
 AUTO_STOP_WINS = max(0, _int_env("AUTO_STOP_WINS", 5))  # stop the session after N wins in a row (0 = off)
+MTG_STEPS = max(0, _int_env("MTG_STEPS", 1))        # martingale steps after a loss
+MTG_MULT = os.getenv("MTG_MULT", "2.2").strip()      # shown in the MTG signal (amount multiplier)
 PAIR_MIN_TRADES = _int_env("PAIR_MIN_TRADES", 8)
 PAIR_MIN_WINRATE = _int_env("PAIR_MIN_WINRATE", 45)
 SEND_RESULTS = os.getenv("SEND_RESULTS", "1") != "0"  # short WIN/LOSS reply after expiry (0 = off)

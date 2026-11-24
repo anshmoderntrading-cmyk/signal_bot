@@ -142,7 +142,10 @@ state.setdefault("blocked_pairs", [])
 state.setdefault("crypto", False)
 state.setdefault("strategy", "")
 state.setdefault("session_stickers", {})   # {"start": {...}, "close": {...}}
-state.setdefault("session", {"w": 0, "l": 0, "streak": 0})  # "" = use .env STRATEGY; "ob" = order block  # include OTC crypto (ETCUSD, DASUSD...) in the pair list  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
+state.setdefault("session", {"w": 0, "l": 0, "streak": 0})
+state["session"].setdefault("mtg_w", 0)
+state.setdefault("mtg", True)     # auto 1-step martingale after a loss
+state.setdefault("chart", False)  # result chart image (off: only stickers)  # "" = use .env STRATEGY; "ob" = order block  # include OTC crypto (ETCUSD, DASUSD...) in the pair list  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []
@@ -224,6 +227,8 @@ def status_text():
             f"Pairs: {'currency + crypto' if state.get('crypto') else 'currency only'}\n"
             f"Strategy: {'📦 Order Block' if active_strategy() == 'ob' else config.STRATEGY + rules}\nMin payout: {config.MIN_PAYOUT}%\n"
             f"Gap after trade: {config.GAP_MINUTES} min\n"
+            f"Auto MTG: {'ON (' + str(config.MTG_STEPS) + ' step)' if state.get('mtg') else 'OFF'}  |  "
+            f"Chart image: {'ON' if state.get('chart') else 'OFF'}\n"
             f"Session: {state['session']['w']} W / {state['session']['l']} L, "
             f"win streak {state['session']['streak']} (auto-stop at {config.AUTO_STOP_WINS})\n"
             f"Channels ON: {', '.join(str(c) for c in state['subscribers'] if c < 0) or 'none'}\n"
@@ -284,7 +289,7 @@ def handle(msg):
             mode = ("🌙 OTC" if state.get("mode") != "live" else "📈 LIVE") if QX is not None else "📈 LIVE"
             note = "" if market_open() else "\n⚠️ The live market is closed right now (weekend). Press 🌙 OTC Market, or wait for Monday."
             note = f"\nMode: {mode}" + note
-            send(cid, f"✅ Signal ON\nOne trade at a time: result + chart, then the next signal after {config.GAP_MINUTES} min.{note}", keyboard=True)
+            send(cid, f"✅ Signal ON\nOne trade at a time: result sticker (+ auto MTG after a loss), then the next signal after {config.GAP_MINUTES} min.{note}", keyboard=True)
         elif txt in EXPIRY_BTNS:
             if not is_admin(cid):
                 send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
@@ -336,6 +341,18 @@ def handle(msg):
             save()
             send(cid, f"{'🚫 Blocked' if low.startswith('/block') else '✅ Allowed'}: {', '.join(pairs)}\n"
                       f"Blocked list: {', '.join(state['blocked_pairs']) or '(none)'}", keyboard=True)
+        elif low.startswith(("/mtg", "/chart")):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            key = "mtg" if low.startswith("/mtg") else "chart"
+            if "on" in low.split()[1:] or low.endswith("_on"):
+                state[key] = True
+            elif "off" in low.split()[1:] or low.endswith("_off"):
+                state[key] = False
+            save()
+            name = "Auto MTG (1 step)" if key == "mtg" else "Result chart image"
+            send(cid, f"{name}: {'ON ✅' if state[key] else 'OFF ❌'}\nChange: /{key}_on  or  /{key}_off",
+                 keyboard=True)
         elif low.startswith("/resetrecord"):
             if not is_admin(cid):
                 send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
@@ -398,14 +415,16 @@ def session_summary():
     s = state["session"]
     n = s["w"] + s["l"]
     acc = f" ({100 * s['w'] / n:.0f}%)" if n else ""
-    return f"📊 Session result: {s['w']} WIN / {s['l']} LOSS{acc}"
+    mw = s.get("mtg_w", 0)
+    mtg = f" ({mw} of them with MTG)" if mw else ""
+    return f"📊 Session result: {s['w']} WIN{mtg} / {s['l']} LOSS{acc}"
 
 
 def start_session(chat_id):
     with lock:
         if chat_id not in state["subscribers"]:
             state["subscribers"].append(chat_id)
-        state["session"] = {"w": 0, "l": 0, "streak": 0}
+        state["session"] = {"w": 0, "l": 0, "streak": 0, "mtg_w": 0}
         save()
     print("session started in", chat_id)
 
@@ -507,8 +526,10 @@ def pair_name(sym):
     return f"{base[:3]}/{base[3:]}{tag}"
 
 
-def fmt_signal(sym, direction, start, end, expiry=None):
+def fmt_signal(sym, direction, start, end, expiry=None, mtg=0):
     expiry = expiry or config.EXPIRY_MINUTES
+    if mtg:
+        return fmt_signal(sym, direction, start, end, expiry) + f"\n🔁 MTG {mtg} (use {config.MTG_MULT}x amount)"
     side = "🟢 BUY" if direction == "CALL" else "🔴 SELL"
     t = lambda d: d.astimezone(IST).strftime("%I:%M %p")
     return (f"{pair_name(sym)} {side}\n"
@@ -629,7 +650,7 @@ def check_result(sym, sig, start_ms, msg_ids):
             print("result error:", ex)
         time.sleep(5)
     if exit_price is None:
-        return
+        return None
     if exit_price == entry:
         res = "draw"
     elif (exit_price > entry) == (sig["direction"] == "CALL"):
@@ -638,11 +659,14 @@ def check_result(sym, sig, start_ms, msg_ids):
         res = "loss"
     print(time.strftime("%H:%M"), "result", sym, sig["direction"], entry, "->", exit_price, res.upper())
     log_result(sym, sig, start_ms, expiry, entry, exit_price, res)
+    mtg_next = res == "loss" and sig.get("mtg_allowed")    # a MTG trade will follow -> sequence not finished
     with lock:
         s = state["session"]
         if res == "win":
             s["w"] += 1; s["streak"] += 1
-        elif res == "loss":
+            if sig.get("mtg"):
+                s["mtg_w"] = s.get("mtg_w", 0) + 1
+        elif res == "loss" and not mtg_next:
             s["l"] += 1; s["streak"] = 0
         state[res] += 1
         if res != "draw":
@@ -650,26 +674,33 @@ def check_result(sym, sig, start_ms, msg_ids):
             pr.append(res)
             del pr[:-20]
         save()
-    if config.SEND_RESULTS:
+    if config.SEND_RESULTS and not mtg_next:
         text = {"win": "✅ WIN", "loss": "❌ LOSS", "draw": "➖ DRAW"}[res]
+        if res == "win" and sig.get("mtg"):
+            text = f"✅ MTG {sig['mtg']} WIN"
         png = None
-        try:
-            png = trade_chart(pair_name(sym), sig["direction"], df, start_ms, entry, exit_price, res,
-                              expiry)
-        except Exception as e:
-            print("chart error:", e)
+        if state.get("chart"):
+            try:
+                png = trade_chart(pair_name(sym), sig["direction"], df, start_ms, entry, exit_price, res,
+                                  expiry)
+            except Exception as e:
+                print("chart error:", e)
         stickers = list(state.get("stickers", {}).get("win" if res == "win" else "loss", []))
         for cid, mid in msg_ids.items():
-            if not (png and send_photo(cid, png, text, reply_to=mid)):
-                send(cid, text, reply_to=mid)
+            if png:
+                if not send_photo(cid, png, text, reply_to=mid):
+                    send(cid, text, reply_to=mid)
+            elif not stickers or res == "draw" or sig.get("mtg"):
+                send(cid, text, reply_to=mid)   # no stickers set (or MTG / draw) -> short text
             if res != "draw":
                 for st in stickers:
                     send_sticker(cid, st)
-    if config.AUTO_STOP_WINS and state["session"]["streak"] >= config.AUTO_STOP_WINS:
+    if config.AUTO_STOP_WINS and state["session"]["streak"] >= config.AUTO_STOP_WINS and res == "win":
         channels = [c for c in state["subscribers"] if c < 0]  # channels/groups have negative ids
         targets = channels or list(state["subscribers"])
         stop_session(targets, f"🏁 {config.AUTO_STOP_WINS} wins in a row - session closed automatically.",
                      post_sticker=True)
+    return res
 
 
 def wait_next_minute():
@@ -707,8 +738,27 @@ def scanner_loop():
             mid = send(cid, text)
             if mid:
                 msg_ids[cid] = mid
-        check_result(sym, sig, start_s * 1000, msg_ids)  # waits until the trade is finished
+        sig["mtg_allowed"] = bool(state.get("mtg")) and config.MTG_STEPS > 0
+        res = check_result(sym, sig, start_s * 1000, msg_ids)  # waits until the trade is finished
         end_s = start_s + expiry * 60
+        step = 0
+        while res == "loss" and state.get("mtg") and step < config.MTG_STEPS and state["subscribers"]:
+            step += 1
+            # MTG: same pair, same direction, the very next minute
+            now = time.time()
+            m_start = (int(now) // 60 + 1) * 60
+            if m_start - now < 10:
+                m_start += 60
+            m_sig = dict(sig, mtg=step, mtg_allowed=step < config.MTG_STEPS)
+            ms = datetime.fromtimestamp(m_start, timezone.utc)
+            m_text = fmt_signal(sym, sig["direction"], ms, ms + timedelta(minutes=expiry), expiry, mtg=step)
+            m_ids = {}
+            for cid in list(state["subscribers"]):
+                mid = send(cid, m_text, reply_to=msg_ids.get(cid))
+                if mid:
+                    m_ids[cid] = mid
+            res = check_result(sym, m_sig, m_start * 1000, m_ids)
+            end_s = m_start + expiry * 60
         next_start_min = end_s + config.GAP_MINUTES * 60
         # next signal is sent right away; its trade starts after the gap
 
