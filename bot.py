@@ -115,7 +115,7 @@ KEYBOARD = {"keyboard": [[{"text": BTN_ON}, {"text": BTN_STOP}],
                          [{"text": BTN_FX_ONLY}, {"text": BTN_CRYPTO}],
                          [{"text": BTN_OB}, {"text": BTN_NORMAL}],
                          [{"text": BTN_STATUS}]], "resize_keyboard": True}
-lock = threading.Lock()
+lock = threading.RLock()  # re-entrant: handlers call helpers that also lock
 
 
 # ---------------- storage ----------------
@@ -341,6 +341,30 @@ def handle(msg):
             save()
             send(cid, f"{'🚫 Blocked' if low.startswith('/block') else '✅ Allowed'}: {', '.join(pairs)}\n"
                       f"Blocked list: {', '.join(state['blocked_pairs']) or '(none)'}", keyboard=True)
+        elif low.startswith(("/channel_on", "/channel_off")):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            parts = txt.split()
+            if len(parts) < 2:
+                send(cid, "Usage: /channel_on @yourchannel   or   /channel_off @yourchannel\n"
+                          "(the bot must be an admin of the channel with 'Post Messages')", keyboard=True)
+                return
+            try:
+                info = requests.get(f"{API}/getChat", params={"chat_id": parts[1]}, timeout=10).json()
+            except Exception as e:
+                info = {"ok": False, "description": str(e)}
+            if not info.get("ok"):
+                send(cid, f"❌ Channel not found: {info.get('description', '')}\n"
+                          "Check the @username and that the bot is an admin there.", keyboard=True)
+                return
+            ch = info["result"]["id"]
+            title = info["result"].get("title", parts[1])
+            if low.startswith("/channel_on"):
+                start_session(ch)
+                send(cid, f"✅ Signals ON in channel: {title}", keyboard=True)
+            else:
+                stop_session([ch])
+                send(cid, f"⛔ Signals OFF in channel: {title}", keyboard=True)
         elif low.startswith(("/mtg", "/chart")):
             if not is_admin(cid):
                 send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
@@ -528,7 +552,7 @@ def pair_name(sym):
 
 def fmt_signal(sym, direction, start, end, expiry=None, mtg=0):
     expiry = expiry or config.EXPIRY_MINUTES
-    side = "🟢 BUY" if direction == "CALL" else "🔴 SELL"
+    side = "🟢 UP ⬆️" if direction == "CALL" else "🔴 DOWN ⬇️"
     t = lambda d: d.astimezone(IST).strftime("%I:%M %p")  # noqa: E731
     text = (f"{pair_name(sym)} {side}\n"
             f"⏱️ {expiry} Min\n"

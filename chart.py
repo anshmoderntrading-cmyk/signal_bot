@@ -81,7 +81,7 @@ def trade_chart(pair, direction, df, start_ms, entry, exit_price, result, expiry
     # pair name with OTC / LIVE written right next to it (plain text, no separate badge)
     dr.text((s(40), s(34)), pair, fill=TEXT, font=_font(44, True))
     x0 = 40 + dr.textlength(pair, font=_font(44, True)) / S + 18
-    lbl = ("BUY  ▲" if up else "SELL  ▼")
+    lbl = ("UP  ▲" if up else "DOWN  ▼")
     bw = dr.textlength(lbl, font=_font(22, True)) / S + 32
     dr.rounded_rectangle([s(x0), s(42), s(x0 + bw), s(78)], radius=s(18), fill=side_col)
     dr.text((s(x0 + bw / 2), s(60)), lbl, fill=(10, 14, 22), font=_font(22, True), anchor="mm")
