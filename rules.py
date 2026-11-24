@@ -71,6 +71,7 @@ def all_rules(df):
                                      np.where((f["ema9"] < f["ema21"]) & (f["color"] < 0), -1, 0))
     R["ema_trend_pullback"] = np.where((f["ema9"] > f["ema21"]) & (f["color"] < 0), 1,
                                        np.where((f["ema9"] < f["ema21"]) & (f["color"] > 0), -1, 0))
+    R["order_block"] = order_block_signals(df)
     for name in R:  # no signals while indicators warm up
         R[name] = np.asarray(R[name], dtype=float)
         R[name][:30] = 0
@@ -81,4 +82,63 @@ def signal_now(df, rule_name):
     """Live: signal of one rule on the last closed candle (+1/-1/0)."""
     if len(df) < 60:
         return 0
-    return int(all_rules(df.tail(200).reset_index(drop=True))[rule_name][-1])
+    d = df.tail(200).reset_index(drop=True)
+    if rule_name == "order_block":
+        return int(order_block_signals(d)[-1])
+    return int(all_rules(d)[rule_name][-1])
+
+
+# ---------------------------------------------------------------------------
+# Order Block (Smart Money Concepts)
+# Bullish OB = last bearish candle before a strong bullish impulse that breaks the recent swing high.
+# Signal when price later comes back INTO the zone and rejects it (bullish close above the zone bottom).
+# Bearish OB = mirror image. A zone is used once, dies if price closes through it or after `life` candles.
+# ---------------------------------------------------------------------------
+def order_block_signals(df, impulse_atr=1.2, swing=10, life=60, return_zones=False):
+    o, h, l, c = (df[k].values.astype(float) for k in ("open", "high", "low", "close"))
+    n = len(c)
+    pc = np.r_[c[0], c[:-1]]
+    tr = np.maximum(h - l, np.maximum(abs(h - pc), abs(l - pc)))
+    atr = pd.Series(tr).ewm(alpha=1 / 14, adjust=False).mean().values
+    sig = np.zeros(n)
+    zones = []      # active: dict(kind, top, bottom, born)
+    all_zones = []  # for drawing
+    for i in range(swing + 2, n):
+        # 1) use / invalidate existing zones with candle i
+        keep = []
+        for z in zones:
+            if i - z["born"] > life:
+                continue
+            if z["kind"] == 1:  # bullish zone
+                if c[i] < z["bottom"]:
+                    continue                         # broken -> dead
+                if l[i] <= z["top"] and c[i] > o[i] and c[i] >= z["bottom"] and sig[i] == 0:
+                    sig[i] = 1                       # tapped + bullish rejection -> CALL
+                    z["used"] = i
+                    continue
+            else:               # bearish zone
+                if c[i] > z["top"]:
+                    continue
+                if h[i] >= z["bottom"] and c[i] < o[i] and c[i] <= z["top"] and sig[i] == 0:
+                    sig[i] = -1                      # tapped + bearish rejection -> PUT
+                    z["used"] = i
+                    continue
+            keep.append(z)
+        zones = keep
+        # 2) new zone created by an impulse candle i
+        body = abs(c[i] - o[i])
+        if body < impulse_atr * atr[i - 1]:
+            continue
+        if c[i] > o[i] and c[i] > h[i - swing:i].max():          # bullish break of structure
+            for j in range(i - 1, max(i - 4, 0), -1):
+                if c[j] < o[j]:                                   # last bearish candle
+                    z = dict(kind=1, top=h[j], bottom=l[j], born=i, start=j)
+                    zones.append(z); all_zones.append(z)
+                    break
+        elif c[i] < o[i] and c[i] < l[i - swing:i].min():        # bearish break of structure
+            for j in range(i - 1, max(i - 4, 0), -1):
+                if c[j] > o[j]:                                   # last bullish candle
+                    z = dict(kind=-1, top=h[j], bottom=l[j], born=i, start=j)
+                    zones.append(z); all_zones.append(z)
+                    break
+    return (sig, all_zones) if return_zones else sig

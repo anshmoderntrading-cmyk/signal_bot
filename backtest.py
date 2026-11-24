@@ -19,6 +19,13 @@ import pandas as pd
 
 import config
 from strategy import analyze, analyze_v2
+from rules import order_block_signals
+
+
+def analyze_ob_bt(df, min_score=0, force=False):
+    d = order_block_signals(df.tail(200).reset_index(drop=True))[-1]
+    return {"direction": "CALL" if d > 0 else "PUT"} if d else None
+
 
 TESTS = [  # (name, function, min_score, force)
     ("old: signal every time", analyze, 4, True),
@@ -26,6 +33,7 @@ TESTS = [  # (name, function, min_score, force)
     ("v2: score>=4", analyze_v2, 4, False),
     ("v2: score>=5", analyze_v2, 5, False),
     ("v2: score>=6", analyze_v2, 6, False),
+    ("order block", analyze_ob_bt, 0, False),
 ]
 
 

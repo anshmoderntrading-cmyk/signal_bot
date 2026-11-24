@@ -41,6 +41,18 @@ def load_rules():
     return _rules_cache["data"]
 
 
+def active_strategy():
+    return state.get("strategy") or config.STRATEGY
+
+
+def analyze_ob(sym, df):
+    d = signal_now(df, "order_block")
+    if not d:
+        return None
+    return {"direction": "CALL" if d > 0 else "PUT", "score": 5, "max": 5, "reasons": ["order_block"],
+            "price": float(df["close"].iloc[-1]), "edge": 0}
+
+
 def analyze_auto(sym, df):
     data = load_rules()
     if not data:
@@ -95,11 +107,13 @@ BTN_ON, BTN_STOP = "🟢 Signal ON", "🔴 Signal STOP"
 BTN_LIVE, BTN_OTC = "📈 LIVE Market", "🌙 OTC Market"
 BTN_STATUS = "⚙️ Status"
 BTN_FX_ONLY, BTN_CRYPTO = "💱 Only Currency", "🪙 Currency + Crypto"
+BTN_OB, BTN_NORMAL = "📦 Order Block", "📊 Normal"
 EXPIRY_BTNS = {f"{m} Min": m for m in range(1, 6)}
 KEYBOARD = {"keyboard": [[{"text": BTN_ON}, {"text": BTN_STOP}],
                          [{"text": BTN_LIVE}, {"text": BTN_OTC}],
                          [{"text": t} for t in EXPIRY_BTNS],
                          [{"text": BTN_FX_ONLY}, {"text": BTN_CRYPTO}],
+                         [{"text": BTN_OB}, {"text": BTN_NORMAL}],
                          [{"text": BTN_STATUS}]], "resize_keyboard": True}
 lock = threading.Lock()
 
@@ -125,7 +139,8 @@ state.setdefault("stickers", {"win": [], "loss": []})
 state.setdefault("mode", "otc")
 state.setdefault("admins", [])
 state.setdefault("blocked_pairs", [])
-state.setdefault("crypto", False)  # include OTC crypto (ETCUSD, DASUSD...) in the pair list  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
+state.setdefault("crypto", False)
+state.setdefault("strategy", "")  # "" = use .env STRATEGY; "ob" = order block  # include OTC crypto (ETCUSD, DASUSD...) in the pair list  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []
@@ -205,7 +220,7 @@ def status_text():
             f"Quotex: {conn}\nLast scan: {last_scan['text']}\n"
             f"Signals: {on}\nMarket: {mode}\nExpiry: {exp}\n"
             f"Pairs: {'currency + crypto' if state.get('crypto') else 'currency only'}\n"
-            f"Strategy: {config.STRATEGY}{rules}\nMin payout: {config.MIN_PAYOUT}%\n"
+            f"Strategy: {'📦 Order Block' if active_strategy() == 'ob' else config.STRATEGY + rules}\nMin payout: {config.MIN_PAYOUT}%\n"
             f"Gap after trade: {config.GAP_MINUTES} min\n"
             f"Record: {w} W / {l} L ({acc})")
 
@@ -304,6 +319,13 @@ def handle(msg):
         elif low.startswith("/id"):
             role = "👑 Owner" if is_owner(cid) else ("🛡️ Admin" if is_admin(cid) and config.OWNER_ID else "Member")
             send(cid, f"Your chat ID: {cid}\nRole: {role}", keyboard=True)
+        elif txt in (BTN_OB, BTN_NORMAL):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            state["strategy"] = "ob" if txt == BTN_OB else ""; save()
+            send(cid, "📦 Order Block strategy ON\nSignal only when price comes back into an order block "
+                      "zone and rejects it. Fewer signals, waits for the setup." if state["strategy"] == "ob"
+                 else f"📊 Normal strategy ({config.STRATEGY})", keyboard=True)
         elif txt in (BTN_FX_ONLY, BTN_CRYPTO):
             if not is_admin(cid):
                 send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
@@ -440,7 +462,9 @@ def best_signal(now_ms):
                 stats["weak_pair"] += 1
                 continue
             force = not config.QUALITY_ONLY
-            if config.STRATEGY == "auto":
+            if active_strategy() == "ob":
+                sig = analyze_ob(sym, df)
+            elif config.STRATEGY == "auto":
                 sig = analyze_auto(sym, df)
             elif config.STRATEGY == "v2":
                 sig = analyze_v2(df, config.MIN_SCORE_V2, force=force)
@@ -490,8 +514,8 @@ def log_result(sym, sig, start_ms, expiry, entry, exit_price, res):
             if new:
                 f.write("time_ist,pair,direction,expiry_min,strategy,rule,entry,exit,result\n")
             t = datetime.fromtimestamp(start_ms / 1000, timezone.utc).astimezone(IST)
-            rule = (sig.get("reasons") or [""])[0] if config.STRATEGY == "auto" else ""
-            f.write(f"{t:%Y-%m-%d %H:%M},{sym},{sig['direction']},{expiry},{config.STRATEGY},"
+            rule = (sig.get("reasons") or [""])[0] if active_strategy() in ("auto", "ob") else ""
+            f.write(f"{t:%Y-%m-%d %H:%M},{sym},{sig['direction']},{expiry},{active_strategy()},"
                     f"{rule},{entry},{exit_price},{res}\n")
     except Exception as e:
         print("results.csv error:", e)
