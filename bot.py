@@ -528,13 +528,14 @@ def pair_name(sym):
 
 def fmt_signal(sym, direction, start, end, expiry=None, mtg=0):
     expiry = expiry or config.EXPIRY_MINUTES
-    if mtg:
-        return fmt_signal(sym, direction, start, end, expiry) + f"\n🔁 MTG {mtg} (use {config.MTG_MULT}x amount)"
     side = "🟢 BUY" if direction == "CALL" else "🔴 SELL"
-    t = lambda d: d.astimezone(IST).strftime("%I:%M %p")
-    return (f"{pair_name(sym)} {side}\n"
+    t = lambda d: d.astimezone(IST).strftime("%I:%M %p")  # noqa: E731
+    text = (f"{pair_name(sym)} {side}\n"
             f"⏱️ {expiry} Min\n"
             f"🕒 {t(start)} – {t(end)}")
+    if state.get("mtg") and config.MTG_STEPS > 0:
+        text += f"\n🔁 {config.MTG_STEPS} Step MTG"
+    return text
 
 
 def pair_is_weak(sym):
@@ -677,7 +678,7 @@ def check_result(sym, sig, start_ms, msg_ids):
     if config.SEND_RESULTS and not mtg_next:
         text = {"win": "✅ WIN", "loss": "❌ LOSS", "draw": "➖ DRAW"}[res]
         if res == "win" and sig.get("mtg"):
-            text = f"✅ MTG {sig['mtg']} WIN"
+            text = f"✅ WIN (MTG {sig['mtg']})"
         png = None
         if state.get("chart"):
             try:
@@ -742,22 +743,13 @@ def scanner_loop():
         res = check_result(sym, sig, start_s * 1000, msg_ids)  # waits until the trade is finished
         end_s = start_s + expiry * 60
         step = 0
-        while res == "loss" and state.get("mtg") and step < config.MTG_STEPS and state["subscribers"]:
+        while res == "loss" and state.get("mtg") and step < config.MTG_STEPS:
             step += 1
-            # MTG: same pair, same direction, the very next minute
-            now = time.time()
-            m_start = (int(now) // 60 + 1) * 60
-            if m_start - now < 10:
-                m_start += 60
+            # silent MTG: members re-enter on the very next candle (same pair, same direction);
+            # the bot only posts the final result, as a reply to the original signal
+            m_start = end_s
             m_sig = dict(sig, mtg=step, mtg_allowed=step < config.MTG_STEPS)
-            ms = datetime.fromtimestamp(m_start, timezone.utc)
-            m_text = fmt_signal(sym, sig["direction"], ms, ms + timedelta(minutes=expiry), expiry, mtg=step)
-            m_ids = {}
-            for cid in list(state["subscribers"]):
-                mid = send(cid, m_text, reply_to=msg_ids.get(cid))
-                if mid:
-                    m_ids[cid] = mid
-            res = check_result(sym, m_sig, m_start * 1000, m_ids)
+            res = check_result(sym, m_sig, m_start * 1000, msg_ids)
             end_s = m_start + expiry * 60
         next_start_min = end_s + config.GAP_MINUTES * 60
         # next signal is sent right away; its trade starts after the gap
