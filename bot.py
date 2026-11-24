@@ -609,7 +609,11 @@ def best_signal(now_ms):
     strict = active_strategy() in ("ob", "auto", "v2") or config.QUALITY_ONLY
     fallback = (strict and config.MAX_WAIT_MINUTES > 0
                 and time.time() - last_signal["t"] >= config.MAX_WAIT_MINUTES * 60 - 30)
-    for sym in current_symbols():
+    syms = current_symbols()
+    if not syms:
+        last_scan["text"] = f"{time.strftime('%H:%M')} -> no pairs with payout >= {config.MIN_PAYOUT}% right now"
+    for k, sym in enumerate(syms, 1):
+        last_scan["text"] = f"{time.strftime('%H:%M')} scanning {k}/{len(syms)}: {sym}..."
         try:
             df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
             if len(df) < 60:

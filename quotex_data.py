@@ -82,10 +82,16 @@ class QuotexFeed:
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
         self.lock = None
+        self.bad = {}    # asset -> time until which it is skipped (no data from Quotex)
         self.cache = {}  # asset -> DataFrame (full history fetched once, then only new candles)
 
     def _run(self, coro, timeout=60):
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
+        fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        try:
+            return fut.result(timeout)
+        except BaseException:
+            fut.cancel()  # a stuck request must not keep holding the lock and block every later call
+            raise
 
     async def _connect(self):
         if self.lock is None:
@@ -117,12 +123,13 @@ class QuotexFeed:
             hist = []
             if limit > 30 and (cached is None or len(cached) < 60):  # history only the first time
                 try:
-                    hist = await self.client.get_historical_candles(asset, limit * 60, 60, max_workers=1) or []
+                    hist = await asyncio.wait_for(
+                        self.client.get_historical_candles(asset, limit * 60, 60, max_workers=1), 25) or []
                 except Exception as e:
                     print("history error", asset, e)
             recent = []
             try:  # latest candles (fast, most up to date)
-                recent = await self.client.get_candles(asset, time.time(), 3600, 60) or []
+                recent = await asyncio.wait_for(self.client.get_candles(asset, time.time(), 3600, 60), 15) or []
             except Exception as e:
                 print("recent candles error", asset, e)
             new = candles_to_df(list(hist) + list(recent))  # recent overrides same minute
@@ -151,7 +158,16 @@ class QuotexFeed:
     def get_klines(self, asset, interval="1m", limit=300):
         if not self.connected:
             raise RuntimeError("Quotex not connected yet")
-        return self._run(self._candles(asset, limit)).iloc[-limit:]
+        if self.bad.get(asset, 0) > time.time():
+            raise RuntimeError("skipped for a few minutes (Quotex sent no data)")
+        try:
+            df = self._run(self._candles(asset, limit), timeout=60).iloc[-limit:]
+        except Exception:
+            self.bad[asset] = time.time() + 600
+            raise
+        if limit > 30 and len(df) < 60:
+            self.bad[asset] = time.time() + 600   # no usable history -> don't waste time on it for 10 min
+        return df
 
     async def _is_open(self, asset):
         async with self.lock:
