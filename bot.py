@@ -140,7 +140,9 @@ state.setdefault("mode", "otc")
 state.setdefault("admins", [])
 state.setdefault("blocked_pairs", [])
 state.setdefault("crypto", False)
-state.setdefault("strategy", "")  # "" = use .env STRATEGY; "ob" = order block  # include OTC crypto (ETCUSD, DASUSD...) in the pair list  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
+state.setdefault("strategy", "")
+state.setdefault("session_stickers", {})   # {"start": {...}, "close": {...}}
+state.setdefault("session", {"w": 0, "l": 0, "streak": 0})  # "" = use .env STRATEGY; "ob" = order block  # include OTC crypto (ETCUSD, DASUSD...) in the pair list  # pairs the admin removed (e.g. not visible in their Quotex app)  # chat ids added by the owner
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []
@@ -222,6 +224,11 @@ def status_text():
             f"Pairs: {'currency + crypto' if state.get('crypto') else 'currency only'}\n"
             f"Strategy: {'📦 Order Block' if active_strategy() == 'ob' else config.STRATEGY + rules}\nMin payout: {config.MIN_PAYOUT}%\n"
             f"Gap after trade: {config.GAP_MINUTES} min\n"
+            f"Session: {state['session']['w']} W / {state['session']['l']} L, "
+            f"win streak {state['session']['streak']} (auto-stop at {config.AUTO_STOP_WINS})\n"
+            f"Channels ON: {', '.join(str(c) for c in state['subscribers'] if c < 0) or 'none'}\n"
+            f"Session stickers: start {'✅' if state['session_stickers'].get('start') else '❌'}"
+            f" / close {'✅' if state['session_stickers'].get('close') else '❌'}\n"
             f"Record: {w} W / {l} L ({acc})")
 
 
@@ -236,14 +243,27 @@ def handle(msg):
     if "sticker" in msg:  # user sends a sticker -> ask whether it is for WIN or LOSS
         if not is_admin(cid):
             return
-        pending_sticker[cid] = msg["sticker"]["file_id"]
-        send(cid, "🎨 Sticker received!\nIs this for a WIN or a LOSS? Type: win  or  loss", keyboard=True)
+        pending_sticker[cid] = (msg["sticker"]["file_id"], msg["sticker"]["file_unique_id"])
+        send(cid, "🎨 Sticker received! What is it for? Type one word:\n"
+                  "win  /  loss  /  start (Session Starts)  /  close (Session Closed)", keyboard=True)
         return
     low = txt.lower()
+    if cid in pending_sticker and low in ("start", "close", "session start", "session close"):
+        fid, uid = pending_sticker.pop(cid)
+        kind = "start" if "start" in low else "close"
+        with lock:
+            state["session_stickers"][kind] = {"file_id": fid, "unique_id": uid}
+            save()
+        send(cid, ("✅ Saved as SESSION START.\nPost this sticker in your channel -> signals start there."
+                   if kind == "start" else
+                   "✅ Saved as SESSION CLOSED.\nPost it in your channel -> signals stop there.\n"
+                   f"The bot also posts it itself after {config.AUTO_STOP_WINS} wins in a row."),
+             keyboard=True)
+        return
     if cid in pending_sticker and low in ("win", "loss", "itm", "otm"):
         kind = "win" if low in ("win", "itm") else "loss"
         with lock:
-            state["stickers"][kind].append(pending_sticker.pop(cid))
+            state["stickers"][kind].append(pending_sticker.pop(cid)[0])
             save()
             n = len(state["stickers"][kind])
         send(cid, f"✅ Saved. {n} sticker(s) will now be sent after every {kind.upper()}.\n"
@@ -374,6 +394,52 @@ def handle(msg):
             send(cid, "Use the button 👇", keyboard=True)
 
 
+def session_summary():
+    s = state["session"]
+    n = s["w"] + s["l"]
+    acc = f" ({100 * s['w'] / n:.0f}%)" if n else ""
+    return f"📊 Session result: {s['w']} WIN / {s['l']} LOSS{acc}"
+
+
+def start_session(chat_id):
+    with lock:
+        if chat_id not in state["subscribers"]:
+            state["subscribers"].append(chat_id)
+        state["session"] = {"w": 0, "l": 0, "streak": 0}
+        save()
+    print("session started in", chat_id)
+
+
+def stop_session(chat_ids, reason="", post_sticker=False):
+    """Stop signals for these chats and post the summary (+ Session Closed sticker if asked)."""
+    summary = session_summary()
+    with lock:
+        for c in chat_ids:
+            if c in state["subscribers"]:
+                state["subscribers"].remove(c)
+        save()
+    close = state["session_stickers"].get("close")
+    for c in chat_ids:
+        if post_sticker and close:
+            send_sticker(c, close["file_id"])
+        send(c, (reason + "\n" if reason else "") + summary)
+    print("session stopped in", chat_ids, reason)
+
+
+def handle_channel(post):
+    """Admin posts the Session Starts / Session Closed sticker in the channel."""
+    cid = post["chat"]["id"]
+    st = post.get("sticker")
+    if not st:
+        return
+    uid = st.get("file_unique_id")
+    ss = state["session_stickers"]
+    if ss.get("start") and uid == ss["start"]["unique_id"]:
+        start_session(cid)
+    elif ss.get("close") and uid == ss["close"]["unique_id"]:
+        stop_session([cid])
+
+
 def poll_updates():
     offset = None
     while True:
@@ -383,6 +449,8 @@ def poll_updates():
                 offset = u["update_id"] + 1
                 if "message" in u:
                     handle(u["message"])
+                elif "channel_post" in u:
+                    handle_channel(u["channel_post"])
         except Exception as e:
             print("poll error:", e); time.sleep(5)
 
@@ -571,6 +639,11 @@ def check_result(sym, sig, start_ms, msg_ids):
     print(time.strftime("%H:%M"), "result", sym, sig["direction"], entry, "->", exit_price, res.upper())
     log_result(sym, sig, start_ms, expiry, entry, exit_price, res)
     with lock:
+        s = state["session"]
+        if res == "win":
+            s["w"] += 1; s["streak"] += 1
+        elif res == "loss":
+            s["l"] += 1; s["streak"] = 0
         state[res] += 1
         if res != "draw":
             pr = state.setdefault("pair_results", {}).setdefault(sym, [])
@@ -592,6 +665,11 @@ def check_result(sym, sig, start_ms, msg_ids):
             if res != "draw":
                 for st in stickers:
                     send_sticker(cid, st)
+    if config.AUTO_STOP_WINS and state["session"]["streak"] >= config.AUTO_STOP_WINS:
+        channels = [c for c in state["subscribers"] if c < 0]  # channels/groups have negative ids
+        targets = channels or list(state["subscribers"])
+        stop_session(targets, f"🏁 {config.AUTO_STOP_WINS} wins in a row - session closed automatically.",
+                     post_sticker=True)
 
 
 def wait_next_minute():
