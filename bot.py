@@ -764,6 +764,19 @@ def wait_next_minute():
 
 
 def scanner_loop():
+    """Never let one error kill the signal thread: log it and continue next minute."""
+    import traceback
+    while True:
+        try:
+            _scanner_loop()
+        except Exception as e:
+            print("SCANNER ERROR (restarting in 60 s):", e)
+            traceback.print_exc()
+            last_scan["text"] = f"{time.strftime('%H:%M')} -> ERROR: {e}"
+            time.sleep(60)
+
+
+def _scanner_loop():
     """One trade at a time: signal -> trade window -> result (+ chart) -> gap -> next signal."""
     next_start_min = 0  # earliest allowed start (epoch seconds) for the next trade
     while True:
