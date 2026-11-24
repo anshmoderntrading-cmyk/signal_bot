@@ -319,10 +319,10 @@ def handle(msg):
         elif low.startswith("/resetrecord"):
             if not is_admin(cid):
                 send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
-            if low.strip() != "/resetrecord yes":
+            if low.strip() not in ("/resetrecord yes", "/resetrecord_yes"):
                 w, l = state.get("win", 0), state.get("loss", 0)
                 send(cid, f"⚠️ This resets the record ({w} W / {l} L) to 0.\n"
-                          "The old trade list is kept in a backup file.\n\nTo confirm send:\n/resetrecord yes",
+                          "The old trade list is kept in a backup file.\n\nTo confirm tap: /resetrecord_yes",
                      keyboard=True)
                 return
             old = (state.get("win", 0), state.get("loss", 0))
