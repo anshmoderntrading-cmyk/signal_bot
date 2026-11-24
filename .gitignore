@@ -8,3 +8,4 @@ browser/
 .venv/
 best_rules.json
 results.csv
+results_*.csv

@@ -316,6 +316,26 @@ def handle(msg):
             save()
             send(cid, f"{'🚫 Blocked' if low.startswith('/block') else '✅ Allowed'}: {', '.join(pairs)}\n"
                       f"Blocked list: {', '.join(state['blocked_pairs']) or '(none)'}", keyboard=True)
+        elif low.startswith("/resetrecord"):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            if low.strip() != "/resetrecord yes":
+                w, l = state.get("win", 0), state.get("loss", 0)
+                send(cid, f"⚠️ This resets the record ({w} W / {l} L) to 0.\n"
+                          "The old trade list is kept in a backup file.\n\nTo confirm send:\n/resetrecord yes",
+                     keyboard=True)
+                return
+            old = (state.get("win", 0), state.get("loss", 0))
+            state["win"] = state["loss"] = state["draw"] = 0
+            state["pair_results"] = {}
+            save()
+            backup = ""
+            if os.path.exists(RESULTS_CSV):
+                backup = f"results_{time.strftime('%Y%m%d_%H%M')}.csv"
+                os.replace(RESULTS_CSV, os.path.join(os.path.dirname(RESULTS_CSV), backup))
+            send(cid, f"🔄 Record reset. Old: {old[0]} W / {old[1]} L"
+                      + (f" (saved as {backup})" if backup else "") + "\nNew record starts from 0 W / 0 L.",
+                 keyboard=True)
         elif low.startswith("/id"):
             role = "👑 Owner" if is_owner(cid) else ("🛡️ Admin" if is_admin(cid) and config.OWNER_ID else "Member")
             send(cid, f"Your chat ID: {cid}\nRole: {role}", keyboard=True)
