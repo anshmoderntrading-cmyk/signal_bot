@@ -65,6 +65,9 @@ AUTO_PAIRS = os.getenv("AUTO_PAIRS", "1") != "0"
 AUTO_STOP_WINS = max(0, _int_env("AUTO_STOP_WINS", 5))  # stop the session after N wins in a row (0 = off)
 MTG_STEPS = max(0, _int_env("MTG_STEPS", 1))        # martingale steps after a loss
 MTG_MULT = os.getenv("MTG_MULT", "2.2").strip()      # shown in the MTG signal (amount multiplier)
+# strict strategies (Order Block / auto / v2): if no setup for this many minutes, send the best
+# normal setup instead, so members get at least one signal every N minutes (0 = never fall back)
+MAX_WAIT_MINUTES = max(0, _int_env("MAX_WAIT_MINUTES", 5))
 PAIR_MIN_TRADES = _int_env("PAIR_MIN_TRADES", 8)
 PAIR_MIN_WINRATE = _int_env("PAIR_MIN_WINRATE", 45)
 SEND_RESULTS = os.getenv("SEND_RESULTS", "1") != "0"  # short WIN/LOSS reply after expiry (0 = off)

@@ -149,7 +149,8 @@ state.setdefault("chart", False)  # result chart image (off: only stickers)  # "
 state.setdefault("pair_results", {})  # pair -> last 20 results ("win"/"loss")  # Quotex only: "otc" (every day) or "live" (real market, Mon-Fri)
 pending_sticker = {}  # chat_id -> sticker file_id waiting for "win"/"loss"
 recent_pairs = []
-last_scan = {"text": "no scan yet"}  # last few signalled pairs, so every signal comes from a different market
+last_scan = {"text": "no scan yet"}
+last_signal = {"t": time.time()}  # when the last signal was sent (for the max-wait fallback)  # last few signalled pairs, so every signal comes from a different market
 
 
 # ---------------- telegram ----------------
@@ -605,6 +606,9 @@ def best_signal(now_ms):
     best = None
     stats = {"ok": 0, "stale": 0, "closed": 0, "no_setup": 0, "error": 0, "few_candles": 0, "weak_pair": 0, "low_payout": 0}
     payouts = {}
+    strict = active_strategy() in ("ob", "auto", "v2") or config.QUALITY_ONLY
+    fallback = (strict and config.MAX_WAIT_MINUTES > 0
+                and time.time() - last_signal["t"] >= config.MAX_WAIT_MINUTES * 60 - 30)
     for sym in current_symbols():
         try:
             df = closed_candles(get_klines(sym, config.INTERVAL, 300), now_ms)
@@ -635,18 +639,25 @@ def best_signal(now_ms):
                 sig = analyze_v2(df, config.MIN_SCORE_V2, force=force)
             else:
                 sig = analyze(df, config.MIN_SCORE, force=force)
+            primary = bool(sig)
+            if not sig and fallback:  # waited too long -> best normal setup
+                sig = analyze(df, config.MIN_SCORE, force=True)
+                if sig:
+                    sig["reasons"] = ["fallback"]
             if not sig:
                 stats["no_setup"] += 1
                 continue
             stats["ok"] += 1
             fresh = sym not in recent_pairs  # prefer a market we haven't just used
-            key = (fresh, sig["score"], sig["edge"])
+            key = (primary, fresh, sig["score"], sig["edge"])
             if best is None or key > best[0]:
                 best = (key, sym, sig, int(df["close_time"].iloc[-1]))
         except Exception as e:
             stats["error"] += 1
             print("scan error", sym, e)
     pick = f" -> {best[1]} {best[2]['direction']}" if best else " -> no signal"
+    if best and best[2].get("reasons") == ["fallback"]:
+        pick += f"  (fallback: no {active_strategy()} setup for {config.MAX_WAIT_MINUTES} min)"
     if config.STRATEGY == "auto":
         data = load_rules()
         if not data or not data.get("rules"):
@@ -802,6 +813,7 @@ def _scanner_loop():
         sig["expiry"] = expiry
         end = start + timedelta(minutes=expiry)
         text = fmt_signal(sym, sig["direction"], start, end, expiry)
+        last_signal["t"] = time.time()
         msg_ids = {}
         for cid in list(state["subscribers"]):
             mid = send(cid, text)
