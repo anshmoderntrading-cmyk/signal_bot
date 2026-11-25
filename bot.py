@@ -159,7 +159,7 @@ def send(chat_id, text, reply_to=None, keyboard=False):
     if reply_to:
         payload["reply_to_message_id"] = reply_to
     if keyboard:
-        payload["reply_markup"] = KEYBOARD
+        payload["reply_markup"] = {"remove_keyboard": True} if config.WEBAPP_URL else KEYBOARD
     try:
         r = requests.post(f"{API}/sendMessage", json=payload, timeout=10).json()
         return r.get("result", {}).get("message_id")
@@ -253,6 +253,60 @@ def handle_group(msg):
         stop_session([gid])
 
 
+BOT_USERNAME = {"v": ""}
+
+
+def panel_url():
+    """Mini App URL with the current settings, so the page opens showing them."""
+    from urllib.parse import urlencode
+    p = {"bot": BOT_USERNAME["v"], "s": "1" if state["subscribers"] else "0",
+         "m": "l" if state.get("mode") == "live" else "o", "e": str(state.get("expiry") or config.EXPIRY_MINUTES),
+         "t": "b" if state.get("strategy") == "ob" else "n", "c": "1" if state.get("crypto") else "0",
+         "g": "1" if state.get("mtg") else "0", "h": "1" if state.get("chart") else "0",
+         "w": state.get("win", 0), "lo": state.get("loss", 0),
+         "q": "1" if (QX is not None and QX.connected) else "0"}
+    return config.WEBAPP_URL + "?" + urlencode(p)
+
+
+def update_menu_button():
+    """Bottom-left 'Panel' button that opens the Mini App (only in the owner's / admins' chats)."""
+    if not config.WEBAPP_URL or not BOT_USERNAME["v"]:
+        return
+    btn = {"type": "web_app", "text": "Panel", "web_app": {"url": panel_url()}}
+    targets = [config.OWNER_ID] + list(state.get("admins", [])) if config.OWNER_ID else \
+        [c for c in state["subscribers"] if c > 0]
+    for chat in targets:
+        if not chat:
+            continue
+        try:
+            requests.post(f"{API}/setChatMenuButton", json={"chat_id": chat, "menu_button": btn}, timeout=10)
+        except Exception as e:
+            print("menu button error:", e)
+
+
+def apply_panel(cid, payload):
+    """Settings saved in the Mini App arrive as /start cfg_s1_mo_e1_tn_c0_g1_h0."""
+    kv = {p[0]: p[1:] for p in payload.split("_")[1:] if p}
+    with lock:
+        if kv.get("s") == "1" and cid not in state["subscribers"]:
+            state["subscribers"].append(cid)
+        if kv.get("s") == "0" and cid in state["subscribers"]:
+            state["subscribers"].remove(cid)
+        if kv.get("m") in ("l", "o"):
+            state["mode"] = "live" if kv["m"] == "l" else "otc"
+        if kv.get("e", "").isdigit() and 1 <= int(kv["e"]) <= 5:
+            state["expiry"] = int(kv["e"])
+        if kv.get("t") in ("b", "n"):
+            state["strategy"] = "ob" if kv["t"] == "b" else ""
+        for key, name in (("c", "crypto"), ("g", "mtg"), ("h", "chart")):
+            if kv.get(key) in ("0", "1"):
+                state[name] = kv[key] == "1"
+        save()
+    _pairs_cache["t"] = 0
+    send(cid, "✅ Settings saved\n\n" + status_text(), keyboard=True)
+    update_menu_button()
+
+
 def handle(msg):
     if msg.get("chat", {}).get("type") in ("group", "supergroup"):
         handle_group(msg)
@@ -310,6 +364,11 @@ def handle(msg):
         send(cid, "🗑️ All stickers removed.", keyboard=True)
         return
     with lock:
+        if low.startswith("/start cfg_") or low.startswith("/cfg_"):
+            if not is_admin(cid):
+                send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
+            apply_panel(cid, txt.split()[-1])
+            return
         if txt == BTN_ON or txt.lower().startswith(("/start", "/on")):
             if cid not in state["subscribers"]:
                 state["subscribers"].append(cid); save()
@@ -774,6 +833,10 @@ def check_result(sym, sig, start_ms, msg_ids):
         targets = channels or list(state["subscribers"])
         stop_session(targets, f"🏁 {config.AUTO_STOP_WINS} wins in a row - session closed automatically.",
                      post_sticker=True)
+    try:
+        update_menu_button()  # panel shows the latest record
+    except Exception:
+        pass
     return res
 
 
@@ -870,6 +933,13 @@ if __name__ == "__main__":
         raise SystemExit("Set TELEGRAM_BOT_TOKEN first (token from @BotFather).")
     print("Bot running...")
     start_web()
+    try:
+        me = requests.get(f"{API}/getMe", timeout=10).json()
+        BOT_USERNAME["v"] = me.get("result", {}).get("username", "")
+        update_menu_button()
+        print("Panel button ready for @" + BOT_USERNAME["v"] if BOT_USERNAME["v"] else "getMe failed")
+    except Exception as e:
+        print("getMe error:", e)
     if QX is not None:
         print("Logging in to Quotex... (if a code arrives by email, send it to the bot on Telegram)")
         QX.connect_forever()

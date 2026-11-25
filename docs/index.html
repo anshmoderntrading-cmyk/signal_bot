@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Signal Bot Panel</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root{--bg:#0f1420;--card:#18202f;--edge:#263046;--txt:#e9edf5;--mut:#8b97b0;--acc:#22c55e;--red:#ef4444;--blue:#3b82f6}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt);padding:16px 14px 90px}
+  .hero{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .logo{width:46px;height:46px;border-radius:14px;background:linear-gradient(135deg,#22c55e,#0ea5e9);display:grid;place-items:center;font-size:24px}
+  h1{font-size:19px;margin:0}.sub{color:var(--mut);font-size:13px;margin-top:2px}
+  .stat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+  .stat div{background:var(--card);border:1px solid var(--edge);border-radius:14px;padding:10px;text-align:center}
+  .stat b{display:block;font-size:17px}.stat span{color:var(--mut);font-size:11px}
+  .card{background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:14px;margin-bottom:12px}
+  .card h2{font-size:13px;color:var(--mut);margin:0 0 10px;text-transform:uppercase;letter-spacing:.5px}
+  .seg{display:flex;gap:8px;flex-wrap:wrap}
+  .seg button{flex:1;min-width:52px;padding:11px 6px;border-radius:12px;border:1px solid var(--edge);background:#121a28;color:var(--txt);font-size:14px;font-weight:600}
+  .seg button.on{background:var(--blue);border-color:var(--blue)}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0}
+  .row+.row{border-top:1px solid var(--edge)}
+  .sw{width:50px;height:28px;border-radius:20px;background:#334155;position:relative;border:none}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.2s}
+  .sw.on{background:var(--acc)}.sw.on::after{left:25px}
+  .big{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .big button{padding:16px;border-radius:16px;border:none;font-size:16px;font-weight:700;color:#fff}
+  .go{background:var(--acc)}.stop{background:var(--red)}
+  .big button.sel{outline:3px solid #fff}
+  .note{color:var(--mut);font-size:12px;text-align:center;margin-top:8px}
+  #save{position:fixed;left:14px;right:14px;bottom:14px;padding:16px;border:none;border-radius:16px;background:var(--blue);color:#fff;font-size:16px;font-weight:700}
+</style>
+</head>
+<body>
+<div class="hero"><div class="logo">📈</div><div><h1>Signal Bot Panel</h1><div class="sub" id="conn">Settings</div></div></div>
+
+<div class="stat">
+  <div><b id="w">0</b><span>WIN</span></div>
+  <div><b id="l">0</b><span>LOSS</span></div>
+  <div><b id="acc">-</b><span>ACCURACY</span></div>
+</div>
+
+<div class="big">
+  <button class="go" id="on">🟢 Signal ON</button>
+  <button class="stop" id="off">🔴 Signal STOP</button>
+</div>
+
+<div class="card"><h2>Market</h2><div class="seg" id="m">
+  <button data-v="l">📈 LIVE</button><button data-v="o">🌙 OTC</button></div></div>
+
+<div class="card"><h2>Expiry</h2><div class="seg" id="e">
+  <button data-v="1">1m</button><button data-v="2">2m</button><button data-v="3">3m</button>
+  <button data-v="4">4m</button><button data-v="5">5m</button></div></div>
+
+<div class="card"><h2>Strategy</h2><div class="seg" id="t">
+  <button data-v="n">📊 Normal</button><button data-v="b">📦 Order Block</button></div></div>
+
+<div class="card"><h2>Options</h2>
+  <div class="row"><span>🪙 Include crypto pairs</span><button class="sw" id="c"></button></div>
+  <div class="row"><span>🔁 Auto 1-step MTG</span><button class="sw" id="g"></button></div>
+  <div class="row"><span>🖼️ Result chart image</span><button class="sw" id="h"></button></div>
+</div>
+<div class="note">Tap Save — the bot applies the settings and replies in the chat.</div>
+<button id="save">💾 Save settings</button>
+
+<script>
+const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); }
+const q = new URLSearchParams(location.search);
+const S = {s:q.get("s")||"0", m:q.get("m")||"o", e:q.get("e")||"1", t:q.get("t")||"n",
+           c:q.get("c")||"0", g:q.get("g")||"1", h:q.get("h")||"0"};
+const bot = q.get("bot") || "";
+document.getElementById("w").textContent = q.get("w")||"0";
+document.getElementById("l").textContent = q.get("lo")||"0";
+const W=+(q.get("w")||0), L=+(q.get("lo")||0);
+document.getElementById("acc").textContent = (W+L) ? (100*W/(W+L)).toFixed(1)+"%" : "-";
+document.getElementById("conn").textContent = q.get("q")==="1" ? "🟢 Quotex connected" : "Settings";
+
+function seg(id){ document.querySelectorAll("#"+id+" button").forEach(b=>{
+  b.classList.toggle("on", b.dataset.v===S[id]);
+  b.onclick=()=>{S[id]=b.dataset.v; seg(id); tg&&tg.HapticFeedback&&tg.HapticFeedback.selectionChanged();};});}
+function sw(id){ const b=document.getElementById(id); b.classList.toggle("on",S[id]==="1");
+  b.onclick=()=>{S[id]=S[id]==="1"?"0":"1"; sw(id);}; }
+function onoff(){ document.getElementById("on").classList.toggle("sel",S.s==="1");
+  document.getElementById("off").classList.toggle("sel",S.s==="0"); }
+["m","e","t"].forEach(seg); ["c","g","h"].forEach(sw); onoff();
+document.getElementById("on").onclick=()=>{S.s="1";onoff();};
+document.getElementById("off").onclick=()=>{S.s="0";onoff();};
+
+document.getElementById("save").onclick=()=>{
+  const payload = "cfg_s"+S.s+"_m"+S.m+"_e"+S.e+"_t"+S.t+"_c"+S.c+"_g"+S.g+"_h"+S.h;
+  const link = "https://t.me/"+bot+"?start="+payload;
+  if (tg) { tg.openTelegramLink(link); setTimeout(()=>tg.close(), 300); } else { location.href = link; }
+};
+</script>
+</body>
+</html>
