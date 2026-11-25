@@ -397,8 +397,9 @@ def handle(msg):
                 if aid not in state["admins"]:
                     state["admins"].append(aid); save()
                 send(cid, f"✅ {aid} is now an admin.", keyboard=True)
-                send(aid, "🛡️ You are now an admin of this bot. You can change market, expiry and stickers.",
+                send(aid, "🛡️ You are now an admin of this bot.\nUse the Panel button (bottom-left) for settings.",
                      keyboard=True)
+                update_menu_button()
             else:
                 if aid in state["admins"]:
                     state["admins"].remove(aid); save()
