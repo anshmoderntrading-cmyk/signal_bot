@@ -938,6 +938,10 @@ if __name__ == "__main__":
         BOT_USERNAME["v"] = me.get("result", {}).get("username", "")
         update_menu_button()
         print("Panel button ready for @" + BOT_USERNAME["v"] if BOT_USERNAME["v"] else "getMe failed")
+        if config.WEBAPP_URL:  # remove the old big keyboard from the owner's / admins' chats
+            for chat in ([config.OWNER_ID] if config.OWNER_ID else []) + list(state.get("admins", [])):
+                if chat:
+                    send(chat, "🤖 Bot started. Use the Panel button (bottom-left) for settings.", keyboard=True)
     except Exception as e:
         print("getMe error:", e)
     if QX is not None:
