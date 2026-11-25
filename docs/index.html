@@ -30,6 +30,14 @@
   .go{background:var(--acc)}.stop{background:var(--red)}
   .big button.sel{outline:3px solid #fff}
   .note{color:var(--mut);font-size:12px;text-align:center;margin-top:8px}
+  .u{display:flex;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--edge)}
+  .u:first-child{border-top:none}
+  .u .who{flex:1;min-width:0}.u .who b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .u .who span{color:var(--mut);font-size:11px}
+  .tag{font-size:10px;padding:3px 7px;border-radius:8px;font-weight:700}
+  .t-o{background:#a16207}.t-a{background:#1d4ed8}.t-m{background:#334155}.t-b{background:#7f1d1d}
+  .u button{border:none;border-radius:9px;padding:7px 9px;font-size:12px;font-weight:700;color:#fff}
+  .b-adm{background:#1d4ed8}.b-del{background:#475569}.b-kick{background:#b91c1c}.b-un{background:#15803d}
   #save{position:fixed;left:14px;right:14px;bottom:14px;padding:16px;border:none;border-radius:16px;background:var(--blue);color:#fff;font-size:16px;font-weight:700}
 </style>
 </head>
@@ -65,6 +73,8 @@
   <div class="row"><span>🔁 Auto 1-step MTG</span><button class="sw" id="g"></button></div>
   <div class="row"><span>🖼️ Result chart image</span><button class="sw" id="h"></button></div>
 </div>
+<div class="card" id="userscard" style="display:none"><h2>👥 Users (owner only)</h2><div id="users"></div></div>
+
 <div class="note">Tap Save — the bot applies the settings and replies in the chat.</div>
 <button id="save">💾 Save settings</button>
 
@@ -91,6 +101,29 @@ function onoff(){ document.getElementById("on").classList.toggle("sel",S.s==="1"
 document.getElementById("on").onclick=()=>{S.s="1";onoff();};
 document.getElementById("off").onclick=()=>{S.s="0";onoff();};
 
+function act(a,id){
+  const link="https://t.me/"+bot+"?start=adm_"+a+"_"+id;
+  if (tg) { tg.openTelegramLink(link); setTimeout(()=>tg.close(),300); } else { location.href=link; }
+}
+if (q.get("own")==="1") {
+  let us=[]; try { us=JSON.parse(q.get("us")||"[]"); } catch(e) {}
+  const box=document.getElementById("users"), names={o:"OWNER",a:"ADMIN",m:"MEMBER",b:"KICKED"};
+  if (!us.length) box.innerHTML='<div class="note">No users yet</div>';
+  us.forEach(([id,name,un,role])=>{
+    const d=document.createElement("div"); d.className="u";
+    const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+    let btns="";
+    if (role==="m") btns='<button class="b-adm" data-a="add">🛡️ Admin</button><button class="b-kick" data-a="kick">🚫 Kick</button>';
+    if (role==="a") btns='<button class="b-del" data-a="del">➖ Admin</button><button class="b-kick" data-a="kick">🚫 Kick</button>';
+    if (role==="b") btns='<button class="b-un" data-a="unkick">✅ Unblock</button>';
+    d.innerHTML='<div class="who"><b>'+esc(name||id)+'</b><span>'+(un?"@"+esc(un)+" · ":"")+id+'</span></div>'+
+      '<span class="tag t-'+role+'">'+names[role]+'</span>'+btns;
+    d.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+      if (confirm(b.textContent.trim()+" → "+(name||id)+"?")) act(b.dataset.a,id); });
+    box.appendChild(d);
+  });
+  document.getElementById("userscard").style.display="block";
+}
 document.getElementById("save").onclick=()=>{
   const payload = "cfg_s"+S.s+"_m"+S.m+"_e"+S.e+"_t"+S.t+"_c"+S.c+"_g"+S.g+"_h"+S.h+"_a"+S.a;
   const link = "https://t.me/"+bot+"?start="+payload;

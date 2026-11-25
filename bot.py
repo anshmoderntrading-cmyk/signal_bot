@@ -138,6 +138,8 @@ state = load()
 state.setdefault("stickers", {"win": [], "loss": []})
 state.setdefault("mode", "otc")
 state.setdefault("admins", [])
+state.setdefault("users", {})    # str(chat_id) -> {"n": name, "u": username, "t": last seen}
+state.setdefault("banned", [])   # chat ids kicked by the owner/admins
 state.setdefault("blocked_pairs", [])
 state.setdefault("crypto", False)
 state.setdefault("strategy", "")
@@ -262,7 +264,74 @@ def auto_stop():
     return config.AUTO_STOP_WINS if v is None else int(v)
 
 
-def panel_url():
+def remember_user(msg):
+    f = msg.get("from") or {}
+    key = str(msg["chat"]["id"])
+    name = (f.get("first_name", "") + " " + f.get("last_name", "")).strip()[:30]
+    new = key not in state["users"]
+    state["users"][key] = {"n": name, "u": f.get("username", ""), "t": int(time.time())}
+    if new or time.time() - state.get("_users_saved", 0) > 300:
+        state["_users_saved"] = time.time()
+        save()
+
+
+def role_of(uid):
+    if uid == config.OWNER_ID:
+        return "o"
+    if uid in state.get("banned", []):
+        return "b"
+    if uid in state.get("admins", []):
+        return "a"
+    return "m"
+
+
+def admin_action(cid, payload):
+    """Panel buttons: adm_add_<id>, adm_del_<id>, adm_kick_<id>, adm_unkick_<id>."""
+    parts = payload.split("_")
+    if len(parts) != 3 or not parts[2].isdigit():
+        return
+    act, uid = parts[1], int(parts[2])
+    if act in ("add", "del") and not is_owner(cid):
+        send(cid, "⛔ Only the owner can manage admins.", keyboard=True); return
+    if act in ("kick", "unkick") and not is_admin(cid):
+        send(cid, "⛔ Only the admin can do this.", keyboard=True); return
+    if uid == config.OWNER_ID:
+        send(cid, "⛔ The owner can't be changed.", keyboard=True); return
+    if act == "kick" and uid in state.get("admins", []) and not is_owner(cid):
+        send(cid, "⛔ Only the owner can kick an admin.", keyboard=True); return
+    with lock:
+        if act == "add" and uid not in state["admins"]:
+            state["admins"].append(uid)
+        elif act == "del" and uid in state["admins"]:
+            state["admins"].remove(uid)
+        elif act == "kick":
+            if uid not in state["banned"]:
+                state["banned"].append(uid)
+            if uid in state["admins"]:
+                state["admins"].remove(uid)
+            if uid in state["subscribers"]:
+                state["subscribers"].remove(uid)
+        elif act == "unkick" and uid in state["banned"]:
+            state["banned"].remove(uid)
+        save()
+    u = state["users"].get(str(uid), {})
+    who = f"{u.get('n') or uid}" + (f" (@{u['u']})" if u.get("u") else "")
+    msg = {"add": f"🛡️ {who} is now an admin.", "del": f"➖ {who} is no longer an admin.",
+           "kick": f"🚫 {who} was kicked (blocked from the bot).", "unkick": f"✅ {who} was unblocked."}[act]
+    send(cid, msg, keyboard=True)
+    if act in ("del", "kick"):
+        try:  # take the Panel button away from them
+            requests.post(f"{API}/setChatMenuButton", json={"chat_id": uid, "menu_button": {"type": "default"}},
+                          timeout=10)
+        except Exception:
+            pass
+    if act == "add":
+        send(uid, "🛡️ You are now an admin of this bot.\nUse the Panel button (bottom-left) for settings.",
+             keyboard=True)
+    update_menu_button()
+
+
+def panel_url(for_chat=None):
     """Mini App URL with the current settings, so the page opens showing them."""
     from urllib.parse import urlencode
     p = {"bot": BOT_USERNAME["v"], "s": "1" if state["subscribers"] else "0",
@@ -272,6 +341,11 @@ def panel_url():
          "a": str(auto_stop()),
          "w": state.get("win", 0), "lo": state.get("loss", 0),
          "q": "1" if (QX is not None and QX.connected) else "0"}
+    if for_chat is not None and is_owner(for_chat):
+        users = sorted(state["users"].items(), key=lambda kv: -kv[1].get("t", 0))[:40]
+        p["own"] = "1"
+        p["us"] = json.dumps([[int(k), v.get("n", ""), v.get("u", ""), role_of(int(k))]
+                              for k, v in users if int(k) > 0], separators=(",", ":"))
     return config.WEBAPP_URL + "?" + urlencode(p)
 
 
@@ -279,12 +353,12 @@ def update_menu_button():
     """Bottom-left 'Panel' button that opens the Mini App (only in the owner's / admins' chats)."""
     if not config.WEBAPP_URL or not BOT_USERNAME["v"]:
         return
-    btn = {"type": "web_app", "text": "Panel", "web_app": {"url": panel_url()}}
     targets = [config.OWNER_ID] + list(state.get("admins", [])) if config.OWNER_ID else \
         [c for c in state["subscribers"] if c > 0]
     for chat in targets:
         if not chat:
             continue
+        btn = {"type": "web_app", "text": "Panel", "web_app": {"url": panel_url(chat)}}
         try:
             requests.post(f"{API}/setChatMenuButton", json={"chat_id": chat, "menu_button": btn}, timeout=10)
         except Exception as e:
@@ -322,6 +396,9 @@ def handle(msg):
         return
     cid = msg["chat"]["id"]
     txt = (msg.get("text") or "").strip()
+    if cid in state.get("banned", []):
+        return  # kicked users are ignored
+    remember_user(msg)
     allowed = (cid == config.ADMIN_CHAT_ID) if config.ADMIN_CHAT_ID else (cid in state["subscribers"])
     if OTP["waiting"] and txt.isdigit() and allowed:
         OTP["code"] = txt
@@ -373,6 +450,9 @@ def handle(msg):
         send(cid, "🗑️ All stickers removed.", keyboard=True)
         return
     with lock:
+        if low.startswith("/start adm_") or low.startswith("/adm_"):
+            admin_action(cid, txt.split()[-1].lstrip("/"))
+            return
         if low.startswith("/start cfg_") or low.startswith("/cfg_"):
             if not is_admin(cid):
                 send(cid, "⛔ Only the admin can change settings.", keyboard=True); return
