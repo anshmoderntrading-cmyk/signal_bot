@@ -57,6 +57,9 @@
 <div class="card"><h2>Strategy</h2><div class="seg" id="t">
   <button data-v="n">📊 Normal</button><button data-v="b">📦 Order Block</button></div></div>
 
+<div class="card"><h2>Auto-stop (wins in a row)</h2><div class="seg" id="a">
+  <button data-v="3">3</button><button data-v="5">5</button><button data-v="7">7</button><button data-v="0">OFF</button></div></div>
+
 <div class="card"><h2>Options</h2>
   <div class="row"><span>🪙 Include crypto pairs</span><button class="sw" id="c"></button></div>
   <div class="row"><span>🔁 Auto 1-step MTG</span><button class="sw" id="g"></button></div>
@@ -69,7 +72,7 @@
 const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); }
 const q = new URLSearchParams(location.search);
 const S = {s:q.get("s")||"0", m:q.get("m")||"o", e:q.get("e")||"1", t:q.get("t")||"n",
-           c:q.get("c")||"0", g:q.get("g")||"1", h:q.get("h")||"0"};
+           c:q.get("c")||"0", g:q.get("g")||"1", h:q.get("h")||"0", a:q.get("a")||"5"};
 const bot = q.get("bot") || "";
 document.getElementById("w").textContent = q.get("w")||"0";
 document.getElementById("l").textContent = q.get("lo")||"0";
@@ -84,12 +87,12 @@ function sw(id){ const b=document.getElementById(id); b.classList.toggle("on",S[
   b.onclick=()=>{S[id]=S[id]==="1"?"0":"1"; sw(id);}; }
 function onoff(){ document.getElementById("on").classList.toggle("sel",S.s==="1");
   document.getElementById("off").classList.toggle("sel",S.s==="0"); }
-["m","e","t"].forEach(seg); ["c","g","h"].forEach(sw); onoff();
+["m","e","t","a"].forEach(seg); ["c","g","h"].forEach(sw); onoff();
 document.getElementById("on").onclick=()=>{S.s="1";onoff();};
 document.getElementById("off").onclick=()=>{S.s="0";onoff();};
 
 document.getElementById("save").onclick=()=>{
-  const payload = "cfg_s"+S.s+"_m"+S.m+"_e"+S.e+"_t"+S.t+"_c"+S.c+"_g"+S.g+"_h"+S.h;
+  const payload = "cfg_s"+S.s+"_m"+S.m+"_e"+S.e+"_t"+S.t+"_c"+S.c+"_g"+S.g+"_h"+S.h+"_a"+S.a;
   const link = "https://t.me/"+bot+"?start="+payload;
   if (tg) { tg.openTelegramLink(link); setTimeout(()=>tg.close(), 300); } else { location.href = link; }
 };

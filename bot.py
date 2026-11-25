@@ -231,7 +231,7 @@ def status_text():
             f"Auto MTG: {'ON (' + str(config.MTG_STEPS) + ' step)' if state.get('mtg') else 'OFF'}  |  "
             f"Chart image: {'ON' if state.get('chart') else 'OFF'}\n"
             f"Session: {state['session']['w']} W / {state['session']['l']} L, "
-            f"win streak {state['session']['streak']} (auto-stop at {config.AUTO_STOP_WINS})\n"
+            f"win streak {state['session']['streak']} (auto-stop: {auto_stop() or 'OFF'})\n"
             f"Channels ON: {', '.join(str(c) for c in state['subscribers'] if c < 0) or 'none'}\n"
             f"Session stickers: start {'✅' if state['session_stickers'].get('start') else '❌'}"
             f" / close {'✅' if state['session_stickers'].get('close') else '❌'}\n"
@@ -256,6 +256,12 @@ def handle_group(msg):
 BOT_USERNAME = {"v": ""}
 
 
+def auto_stop():
+    """Wins in a row that close the session (panel setting overrides .env); 0 = off."""
+    v = state.get("auto_stop")
+    return config.AUTO_STOP_WINS if v is None else int(v)
+
+
 def panel_url():
     """Mini App URL with the current settings, so the page opens showing them."""
     from urllib.parse import urlencode
@@ -263,6 +269,7 @@ def panel_url():
          "m": "l" if state.get("mode") == "live" else "o", "e": str(state.get("expiry") or config.EXPIRY_MINUTES),
          "t": "b" if state.get("strategy") == "ob" else "n", "c": "1" if state.get("crypto") else "0",
          "g": "1" if state.get("mtg") else "0", "h": "1" if state.get("chart") else "0",
+         "a": str(auto_stop()),
          "w": state.get("win", 0), "lo": state.get("loss", 0),
          "q": "1" if (QX is not None and QX.connected) else "0"}
     return config.WEBAPP_URL + "?" + urlencode(p)
@@ -298,6 +305,8 @@ def apply_panel(cid, payload):
             state["expiry"] = int(kv["e"])
         if kv.get("t") in ("b", "n"):
             state["strategy"] = "ob" if kv["t"] == "b" else ""
+        if kv.get("a", "").isdigit() and int(kv["a"]) in (0, 3, 5, 7):
+            state["auto_stop"] = int(kv["a"])
         for key, name in (("c", "crypto"), ("g", "mtg"), ("h", "chart")):
             if kv.get(key) in ("0", "1"):
                 state[name] = kv[key] == "1"
@@ -343,7 +352,7 @@ def handle(msg):
         send(cid, ("✅ Saved as SESSION START.\nPost this sticker in your channel -> signals start there."
                    if kind == "start" else
                    "✅ Saved as SESSION CLOSED.\nPost it in your channel -> signals stop there.\n"
-                   f"The bot also posts it itself after {config.AUTO_STOP_WINS} wins in a row."),
+                   f"The bot also posts it itself after {auto_stop()} wins in a row." if auto_stop() else ""),
              keyboard=True)
         return
     if cid in pending_sticker and low in ("win", "loss", "itm", "otm"):
@@ -829,10 +838,10 @@ def check_result(sym, sig, start_ms, msg_ids):
             if res != "draw":
                 for st in stickers:
                     send_sticker(cid, st)
-    if config.AUTO_STOP_WINS and state["session"]["streak"] >= config.AUTO_STOP_WINS and res == "win":
+    if auto_stop() and state["session"]["streak"] >= auto_stop() and res == "win":
         channels = [c for c in state["subscribers"] if c < 0]  # channels/groups have negative ids
         targets = channels or list(state["subscribers"])
-        stop_session(targets, f"🏁 {config.AUTO_STOP_WINS} wins in a row - session closed automatically.",
+        stop_session(targets, f"🏁 {auto_stop()} wins in a row - session closed automatically.",
                      post_sticker=True)
     try:
         update_menu_button()  # panel shows the latest record
